@@ -1,7 +1,45 @@
+# ROS / catkin build artifacts
 /arm_ws/build
 /arm_ws/.catkin_workspace
 /arm_ws/devel
+
+# Downloaded model data (not in repo, from Google Drive)
 /object_detection/Garbage\ Detection/
 /object_detection/Grape\ Leaves\ disease\ detection/
 /object_detection/scripts/labelmap.pbtxt
 /Jaco_arm/Assets/Prefabs/Garbageold
+
+# Unity generated/cache folders
+/Jaco_arm/Library/
+/Jaco_arm/Temp/
+/Jaco_arm/Obj/
+/Jaco_arm/Logs/
+/Jaco_arm/UserSettings/
+/Jaco_arm/MemoryCaptures/
+/Jaco_arm/Build/
+/Jaco_arm/Builds/
+/Jaco_arm/.vs/
+/Jaco_arm/.vscode/
+/Jaco_arm/.vsconfig
+*.csproj
+*.sln
+*.unityproj
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Crash reports
+sysinfo.txt
+*.stackdump
+
+# Object detection runtime output
+/temp_txt/
+*.pyc
+__pycache__/
