@@ -29,6 +29,10 @@ public class TrajectoryPlanner : MonoBehaviour
     GameObject m_TargetPlacement;
     public GameObject TargetPlacement { get => m_TargetPlacement; set => m_TargetPlacement = value; }
 
+    [SerializeField]
+    ManualJointControl m_ManualJointControl;
+    public ManualJointControl ManualJointControl { get => m_ManualJointControl; set => m_ManualJointControl = value; }
+
     readonly Quaternion m_PickOrientation = new Quaternion(0.19721326231956483f, -0.0665614977478981f, 0.9772276878356934f, 0.04126504436135292f);
     readonly Vector3 m_PickPoseOffset = Vector3.up * 0.1f;
     Quaternion or = new Quaternion(-0.003451f, 0.006689f, 0.989699f, -0.142966f);
@@ -133,6 +137,12 @@ public class TrajectoryPlanner : MonoBehaviour
     /// </summary>
     public void PublishJoints()
     {
+        if (m_ManualJointControl != null && m_ManualJointControl.ManualModeEnabled)
+        {
+            Debug.LogWarning("Manual joint control is active; ignoring ROS trajectory request.");
+            return;
+        }
+
         var request = new MoverServiceRequest();
         request.joints_input = CurrentJointConfig();
 

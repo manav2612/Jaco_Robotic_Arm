@@ -2689,60 +2689,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 7b68941a3e16c84df9e68779ab89d176, type: 3}
   m_PrefabInstance: {fileID: 1980416240}
   m_PrefabAsset: {fileID: 0}
---- !u!1 &672770920
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 672770923}
-  - component: {fileID: 672770921}
-  m_Layer: 0
-  m_Name: Publisher
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &672770921
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 672770920}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2e50036f712732b02860f69c3d30b98e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  m_RosServiceName: jaco_unity
-  m_j2n6s200: {fileID: 2137049589}
-  m_ManualJointControl: {fileID: 0}
-  targetCamera: {fileID: 1946168423}
-  raycastMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  raycastOrigin: {fileID: 1757634726}
-  m_endEffector: {fileID: 699610906}
-  stage: 0
---- !u!4 &672770923
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 672770920}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.44912145, y: 0.056227088, z: 1.1943836}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &681325553
 GameObject:
   m_ObjectHideFlags: 0
@@ -9731,6 +9677,7 @@ GameObject:
   m_Component:
   - component: {fileID: 2137049592}
   - component: {fileID: 2137049591}
+  - component: {fileID: 2137049593}
   m_Layer: 0
   m_Name: j2n6s200
   m_TagString: robot
@@ -9771,6 +9718,22 @@ Transform:
   - {fileID: 1893175736}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2137049593
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2137049589}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 82df14ccd6fd0124fad0d61dc45de683, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ManualJointControl
+  m_j2n6s200: {fileID: 2137049589}
+  m_ManualModeEnabled: 1
+  m_Sensitivity: 2
+  m_KeySpeed: 30
 --- !u!1 &2146379711 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -7412755377166324436, guid: e49800b3dc7525b7ba3c86c6cd196f84, type: 3}
@@ -10299,7 +10262,6 @@ SceneRoots:
   - {fileID: 1794939084}
   - {fileID: 2137049592}
   - {fileID: 1036768113}
-  - {fileID: 672770923}
   - {fileID: 1016606945}
   - {fileID: 2129763680}
   - {fileID: 7381056254811283252}

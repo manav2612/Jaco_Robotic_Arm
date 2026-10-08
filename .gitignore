@@ -21,8 +21,16 @@
 /Jaco_arm/.vs/
 /Jaco_arm/.vscode/
 /Jaco_arm/.vsconfig
+
+# Stray Unity template/recovery folders left by Hub mis-launches
+/Jaco_arm/Assets/My project/
+/Jaco_arm/Assets/My project.meta
+/Jaco_arm/My project*/
+/Jaco_arm/Assets/_Recovery/
+/Jaco_arm/Assets/_Recovery.meta
 *.csproj
 *.sln
+*.slnx
 *.unityproj
 *.suo
 *.user

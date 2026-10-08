@@ -25,7 +25,11 @@ public class GarbageSorting : MonoBehaviour
     [SerializeField]
     GameObject m_j2n6s200;
     public GameObject j2n6s200 { get => m_j2n6s200; set => m_j2n6s200 = value; }
-    
+
+    [SerializeField]
+    ManualJointControl m_ManualJointControl;
+    public ManualJointControl ManualJointControl { get => m_ManualJointControl; set => m_ManualJointControl = value; }
+
     // Pick Default Values
     private Quaternion PickOrientation;
     private Quaternion DefaultPickOrientation = new Quaternion(0.6935244202613831f, -0.02997758984565735f, 0.716662585735321f, -0.06723421812057495f);
@@ -310,6 +314,12 @@ public class GarbageSorting : MonoBehaviour
     /// </summary>
     public void PublishJoints()
     {
+        if (m_ManualJointControl != null && m_ManualJointControl.ManualModeEnabled)
+        {
+            Debug.LogWarning("Manual joint control is active; ignoring ROS trajectory request.");
+            return;
+        }
+
         var request = new MoverServiceRequest();
         request.joints_input = CurrentJointConfig();
 
