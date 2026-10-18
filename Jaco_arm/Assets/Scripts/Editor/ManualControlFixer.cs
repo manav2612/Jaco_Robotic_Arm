@@ -5,6 +5,60 @@ using Unity.Robotics.UrdfImporter.Control;
 
 public static class ManualControlFixer
 {
+    public static void ImportTmpEssentialsAndOpenTestScene()
+    {
+        var pkgPath = "Packages/com.unity.ugui/Package Resources/TMP Essential Resources.unitypackage";
+        if (System.IO.File.Exists(pkgPath))
+        {
+            AssetDatabase.importPackageCompleted += _ =>
+            {
+                EditorSceneManager.OpenScene("Assets/Scenes/ManualControlTestScene.unity");
+                Debug.Log("TMP essentials imported and ManualControlTestScene opened.");
+            };
+            AssetDatabase.ImportPackage(pkgPath, false);
+        }
+        else
+        {
+            Debug.LogError("TMP Essential Resources package not found at " + pkgPath);
+            EditorSceneManager.OpenScene("Assets/Scenes/ManualControlTestScene.unity");
+        }
+    }
+
+    public static void ResetManualJointControlAndOpen()
+    {
+        EditorSceneManager.OpenScene("Assets/Scenes/ManualControlTestScene.unity");
+
+        var j2n6s200 = GameObject.Find("j2n6s200");
+        if (j2n6s200 == null)
+        {
+            Debug.LogError("j2n6s200 GameObject not found.");
+            return;
+        }
+
+        var existing = j2n6s200.GetComponent<ManualJointControl>();
+        if (existing != null)
+        {
+            Object.DestroyImmediate(existing);
+            Debug.Log("Removed stale ManualJointControl component.");
+        }
+
+        var fresh = j2n6s200.AddComponent<ManualJointControl>();
+        fresh.j2n6s200 = j2n6s200;
+        fresh.ManualModeEnabled = true;
+        Debug.Log("Added fresh ManualJointControl component with clean defaults.");
+
+        var activeScene = EditorSceneManager.GetActiveScene();
+        EditorSceneManager.MarkSceneDirty(activeScene);
+        EditorSceneManager.SaveScene(activeScene);
+        Debug.Log("ManualControlTestScene saved with reset ManualJointControl.");
+    }
+
+    public static void OpenManualTestScene()
+    {
+        EditorSceneManager.OpenScene("Assets/Scenes/ManualControlTestScene.unity");
+        Debug.Log("Opened ManualControlTestScene.");
+    }
+
     public static void CreateManualTestScene()
     {
         var sourcePath = "Assets/Scenes/GarbageSortingScene.unity";

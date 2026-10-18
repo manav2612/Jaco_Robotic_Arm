@@ -9732,8 +9732,17 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ManualJointControl
   m_j2n6s200: {fileID: 2137049589}
   m_ManualModeEnabled: 1
-  m_Sensitivity: 2
-  m_KeySpeed: 30
+  m_Sensitivity: 0.01
+  m_DepthSpeed: 0.3
+  m_GripperSpeed: 60
+  m_DoubleClickWindow: 0.3
+  m_DampingLambda: 0.03
+  m_MaxStepMeters: 0.015
+  m_ManipulabilityThreshold: 0.0025
+  m_TrajectoryDuration: 0.12
+  m_UnreachableErrorThreshold: 0.05
+  m_UnreachableWindowSeconds: 1.5
+  m_UnreachableMinImprovementFrac: 0.15
 --- !u!1 &2146379711 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -7412755377166324436, guid: e49800b3dc7525b7ba3c86c6cd196f84, type: 3}
