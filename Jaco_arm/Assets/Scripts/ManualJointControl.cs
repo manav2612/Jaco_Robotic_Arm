@@ -53,6 +53,9 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField]
     float m_ReachSafetyMargin = 0.95f; // m_DesiredPosition is clamped to this fraction of m_MaxReachMeters from the base
 
+    [SerializeField]
+    float m_MaxTargetLeadDegrees = 20f; // anti-windup: xDrive.target is never allowed to lead the joint's actual measured angle by more than this
+
     ArticulationBody[] m_ArmJoints;
     readonly bool[] m_JointLocked = new bool[k_NumRobotJoints];
     ArticulationBody m_RightGripper;
@@ -409,6 +412,21 @@ public class ManualJointControl : MonoBehaviour
             {
                 newTarget = Mathf.Clamp(newTarget, drive.lowerLimit, drive.upperLimit);
             }
+
+            // Anti-windup: never let the commanded target get far ahead of where the
+            // joint actually physically is right now. Without this, a joint with no
+            // hard limits (lowerLimit == upperLimit == 0, e.g. a continuous base joint)
+            // has nothing above to stop drive.target accumulating every single frame
+            // this runs (which is every frame there's tracking error, not just frames
+            // with mouse input) - observed reaching tens of thousands of degrees after
+            // a couple minutes of a stuck drag. A PD position drive given a setpoint
+            // that far from reality doesn't track faster, it just stalls, which is what
+            // "mouse isn't giving direction" actually was: the joints were saturated
+            // chasing an astronomically stale target, not failing to read the mouse.
+            var actualAngleDeg = joint.jointPosition.dofCount > 0
+                ? joint.jointPosition[0] * Mathf.Rad2Deg
+                : newTarget;
+            newTarget = Mathf.Clamp(newTarget, actualAngleDeg - m_MaxTargetLeadDegrees, actualAngleDeg + m_MaxTargetLeadDegrees);
 
             drive.target = newTarget;
             joint.xDrive = drive;
