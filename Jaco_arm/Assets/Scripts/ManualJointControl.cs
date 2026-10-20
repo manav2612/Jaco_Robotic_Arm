@@ -251,11 +251,17 @@ public class ManualJointControl : MonoBehaviour
         if (Input.GetMouseButton(0) && Time.unscaledTime - m_LastDiagLogTime > 0.25f)
         {
             m_LastDiagLogTime = Time.unscaledTime;
+            var jointTargets = string.Empty;
+            for (var i = 0; i < k_NumRobotJoints; i++)
+            {
+                jointTargets += $"J{i + 1}={m_ArmJoints[i].xDrive.target:F2}({(m_ArmJoints[i].jointType)},lock={m_JointLocked[i]}) ";
+            }
             Debug.Log($"[ManualJointControl diag] mouseXY=({Input.GetAxis("Mouse X"):F3},{Input.GetAxis("Mouse Y"):F3}) " +
                 $"desired={m_DesiredPosition:F4} actual={m_EndEffector.position:F4} " +
                 $"distBase={Vector3.Distance(m_DesiredPosition, m_ArmBasePosition):F4} " +
                 $"maxRadius={m_MaxReachMeters * m_ReachSafetyMargin:F4} " +
-                $"trackErr={Vector3.Distance(m_DesiredPosition, m_EndEffector.position):F4} unreachable={m_TargetUnreachable}");
+                $"trackErr={Vector3.Distance(m_DesiredPosition, m_EndEffector.position):F4} unreachable={m_TargetUnreachable} " +
+                $"timeScale={Time.timeScale:F3} status=[{m_DebugStatus}] joints={jointTargets}");
         }
 
         if (Input.GetKey(KeyCode.UpArrow))
