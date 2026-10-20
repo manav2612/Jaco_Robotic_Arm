@@ -10,7 +10,9 @@ using UnityEngine;
 ///     right, mouse Y -> world forward/back, an XZ-cross move) and the vertical plane
 ///     (mouse X -> camera-right, mouse Y -> world up, an XY-cross move). Left/Right
 ///     arrows move the target along camera-forward (depth); Up/Down arrows open/close
-///     the gripper.
+///     the gripper. Number keys 1-6 toggle a lock on the matching joint: a locked joint
+///     is removed from the IK solve and holds its angle while the remaining joints do
+///     the work. 0 unlocks all joints.
 /// </summary>
 public class ManualJointControl : MonoBehaviour
 {
@@ -26,6 +28,9 @@ public class ManualJointControl : MonoBehaviour
 
     [SerializeField]
     float m_Sensitivity = 0.01f; // meters of end-effector motion per unit of mouse delta
+
+    [SerializeField]
+    float m_SpeedScale = 3f; // multiplies sensitivity, depth speed and the per-frame step clamp; PageUp/PageDown adjust it live
 
     [SerializeField]
     float m_DepthSpeed = 0.3f; // meters/sec while holding Left/Right arrow
@@ -45,7 +50,11 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField]
     float m_ManipulabilityThreshold = 0.0025f; // below this, damping ramps up (singularity-robust inverse)
 
+    [SerializeField]
+    float m_ReachSafetyMargin = 0.95f; // m_DesiredPosition is clamped to this fraction of m_MaxReachMeters from the base
+
     ArticulationBody[] m_ArmJoints;
+    readonly bool[] m_JointLocked = new bool[k_NumRobotJoints];
     ArticulationBody m_RightGripper;
     ArticulationBody m_LeftGripper;
     Transform m_EndEffector;
@@ -141,6 +150,17 @@ public class ManualJointControl : MonoBehaviour
             }
         }
 
+        UpdateJointLocks();
+
+        if (Input.GetKeyDown(KeyCode.PageUp))
+        {
+            m_SpeedScale = Mathf.Min(m_SpeedScale * 1.25f, 20f);
+        }
+        else if (Input.GetKeyDown(KeyCode.PageDown))
+        {
+            m_SpeedScale = Mathf.Max(m_SpeedScale / 1.25f, 0.2f);
+        }
+
         var worldDelta = Vector3.zero;
 
         if (Input.GetMouseButton(0) && m_Camera != null)
@@ -153,8 +173,8 @@ public class ManualJointControl : MonoBehaviour
                 // Vertical plane: combines camera-right (X) and world-up (Y) so a
                 // diagonal drag moves both axes at once (XY-cross) instead of only
                 // ever reading mouse Y.
-                worldDelta += m_Camera.transform.right * (mouseX * m_Sensitivity);
-                worldDelta += Vector3.up * (mouseY * m_Sensitivity);
+                worldDelta += m_Camera.transform.right * (mouseX * m_Sensitivity * m_SpeedScale);
+                worldDelta += Vector3.up * (mouseY * m_Sensitivity * m_SpeedScale);
             }
             else
             {
@@ -163,8 +183,8 @@ public class ManualJointControl : MonoBehaviour
                 // components (XZ-cross) instead of only ever reading mouse X.
                 var groundRight = Vector3.ProjectOnPlane(m_Camera.transform.right, Vector3.up).normalized;
                 var groundForward = Vector3.ProjectOnPlane(m_Camera.transform.forward, Vector3.up).normalized;
-                worldDelta += groundRight * (mouseX * m_Sensitivity);
-                worldDelta += groundForward * (mouseY * m_Sensitivity);
+                worldDelta += groundRight * (mouseX * m_Sensitivity * m_SpeedScale);
+                worldDelta += groundForward * (mouseY * m_Sensitivity * m_SpeedScale);
             }
         }
 
@@ -172,17 +192,32 @@ public class ManualJointControl : MonoBehaviour
         {
             if (Input.GetKey(KeyCode.RightArrow))
             {
-                worldDelta += m_Camera.transform.forward * (m_DepthSpeed * Time.deltaTime);
+                worldDelta += m_Camera.transform.forward * (m_DepthSpeed * m_SpeedScale * Time.deltaTime);
             }
             else if (Input.GetKey(KeyCode.LeftArrow))
             {
-                worldDelta -= m_Camera.transform.forward * (m_DepthSpeed * Time.deltaTime);
+                worldDelta -= m_Camera.transform.forward * (m_DepthSpeed * m_SpeedScale * Time.deltaTime);
             }
         }
 
         if (worldDelta.sqrMagnitude > 0f)
         {
             m_DesiredPosition += worldDelta;
+
+            // Clamp the desired position to a sphere around the arm base so it can never
+            // run away to a point many meters outside the workspace. Without this, a big
+            // mouse delta (e.g. a burst of batched movement over RDP, or a high
+            // m_SpeedScale) accumulates into m_DesiredPosition unbounded: once it's
+            // meters away from anything reachable, the solver saturates trying to chase
+            // it and further mouse drags in any direction barely change the resulting
+            // direction of travel, so control looks "dead" even though the solver is
+            // technically still running every frame.
+            var offsetFromBase = m_DesiredPosition - m_ArmBasePosition;
+            var maxRadius = m_MaxReachMeters * m_ReachSafetyMargin;
+            if (offsetFromBase.magnitude > maxRadius)
+            {
+                m_DesiredPosition = m_ArmBasePosition + offsetFromBase.normalized * maxRadius;
+            }
 
             // Re-plan the minimum-jerk trajectory: start from wherever the smoothed
             // point currently is (for continuity, no pop) and ease toward the new goal
@@ -215,6 +250,27 @@ public class ManualJointControl : MonoBehaviour
         else if (Input.GetKey(KeyCode.DownArrow))
         {
             JogGripper(-m_GripperSpeed * Time.deltaTime);
+        }
+    }
+
+    /// <summary>
+    ///     Joint lock: keys 1-6 (top row or keypad) toggle the lock on joint 1-6, 0 clears
+    ///     all locks. A locked joint keeps its current drive target and is excluded from
+    ///     the Jacobian, so the solver redistributes the motion over the free joints.
+    /// </summary>
+    void UpdateJointLocks()
+    {
+        for (var i = 0; i < k_NumRobotJoints; i++)
+        {
+            if (Input.GetKeyDown(KeyCode.Alpha1 + i) || Input.GetKeyDown(KeyCode.Keypad1 + i))
+            {
+                m_JointLocked[i] = !m_JointLocked[i];
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.Keypad0))
+        {
+            System.Array.Clear(m_JointLocked, 0, k_NumRobotJoints);
         }
     }
 
@@ -255,12 +311,18 @@ public class ManualJointControl : MonoBehaviour
             return;
         }
 
-        var clampedError = Vector3.ClampMagnitude(positionError, m_MaxStepMeters);
+        var clampedError = Vector3.ClampMagnitude(positionError, m_MaxStepMeters * m_SpeedScale);
         var endEffectorPos = m_EndEffector.position;
 
         var jacobianColumns = new Vector3[k_NumRobotJoints];
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
+            if (m_JointLocked[i])
+            {
+                jacobianColumns[i] = Vector3.zero; // locked: contributes nothing to the solve
+                continue;
+            }
+
             var joint = m_ArmJoints[i];
             var axisWorld = joint.transform.TransformDirection(joint.anchorRotation * Vector3.right).normalized;
             var jointPos = joint.transform.TransformPoint(joint.anchorPosition);
@@ -311,6 +373,11 @@ public class ManualJointControl : MonoBehaviour
         var totalDqDeg = 0f;
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
+            if (m_JointLocked[i])
+            {
+                continue;
+            }
+
             var dq = Vector3.Dot(jacobianColumns[i], weighted); // radians
             var joint = m_ArmJoints[i];
             var drive = joint.xDrive;
@@ -440,13 +507,21 @@ public class ManualJointControl : MonoBehaviour
             return;
         }
 
-        GUILayout.BeginArea(new Rect(10, 60, 360, 260), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 360, 320), GUI.skin.box);
         GUILayout.Label("Manual IK Control (all joints move in sync)");
         GUILayout.Label($"Max reach from base: {m_MaxReachMeters:F3} m (base: {m_ArmBasePosition:F3})");
         GUILayout.Label($"Debug: {m_DebugStatus}");
         GUILayout.Label($"Drag mode: {(m_VerticalDragMode ? "Vertical plane (X=camera-right, Y=world-up)" : "Horizontal plane (X=ground-right, Y=ground-forward)")} — double-click to switch, diagonal drag combines both axes");
         GUILayout.Label("Left/Right arrow: move depth (camera forward/back)");
         GUILayout.Label("Up/Down arrow: open/close gripper");
+        var lockState = string.Empty;
+        for (var i = 0; i < k_NumRobotJoints; i++)
+        {
+            lockState += $"J{i + 1}:{(m_JointLocked[i] ? "LOCKED" : "free")}  ";
+        }
+        GUILayout.Label("Keys 1-6: lock/unlock joint, 0: unlock all");
+        GUILayout.Label($"Speed x{m_SpeedScale:F2}  (PageUp faster / PageDown slower)");
+        GUILayout.Label(lockState);
         if (m_EndEffector != null)
         {
             var desiredColor = m_TargetUnreachable ? Color.red : GUI.skin.label.normal.textColor;
