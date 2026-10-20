@@ -125,10 +125,15 @@ public class ManualJointControl : MonoBehaviour
             prevPos = jointPos;
         }
         m_MaxReachMeters += Vector3.Distance(prevPos, m_EndEffector.position);
+
+        Debug.Log($"[ManualJointControl diag] base={m_ArmBasePosition:F4} maxReach={m_MaxReachMeters:F4} " +
+            $"endEffectorStart={m_EndEffector.position:F4} desiredStart={m_DesiredPosition:F4} " +
+            $"distBaseToEE={Vector3.Distance(m_ArmBasePosition, m_EndEffector.position):F4}");
     }
 
     // Debug diagnostics shown in OnGUI to help track down why dragging might not move the arm.
     string m_DebugStatus = "no drag yet";
+    float m_LastDiagLogTime = -1f;
 
     void Update()
     {
@@ -242,6 +247,16 @@ public class ManualJointControl : MonoBehaviour
         var error = smoothedTarget - m_EndEffector.position;
         SolveAndApplyIkStep(error);
         UpdateUnreachableFlag(Vector3.Distance(m_DesiredPosition, m_EndEffector.position));
+
+        if (Input.GetMouseButton(0) && Time.unscaledTime - m_LastDiagLogTime > 0.25f)
+        {
+            m_LastDiagLogTime = Time.unscaledTime;
+            Debug.Log($"[ManualJointControl diag] mouseXY=({Input.GetAxis("Mouse X"):F3},{Input.GetAxis("Mouse Y"):F3}) " +
+                $"desired={m_DesiredPosition:F4} actual={m_EndEffector.position:F4} " +
+                $"distBase={Vector3.Distance(m_DesiredPosition, m_ArmBasePosition):F4} " +
+                $"maxRadius={m_MaxReachMeters * m_ReachSafetyMargin:F4} " +
+                $"trackErr={Vector3.Distance(m_DesiredPosition, m_EndEffector.position):F4} unreachable={m_TargetUnreachable}");
+        }
 
         if (Input.GetKey(KeyCode.UpArrow))
         {
