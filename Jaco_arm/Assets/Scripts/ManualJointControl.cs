@@ -2,17 +2,14 @@ using UnityEngine;
 
 /// <summary>
 ///     Manual Cartesian jog control for the j2n6s200 arm's end effector, for testing
-///     without ROS running. Dragging the mouse moves the end effector and a closed-loop
-///     damped least squares (DLS) / singularity-robust inverse solve on the geometric
-///     Jacobian updates all 6 arm joints together in sync to follow it. A diagonal drag
-///     combines both mouse components into a single 2D plane move (not clamped to one
-///     axis): double-click toggles between the horizontal ground plane (mouse X -> world
-///     right, mouse Y -> world forward/back, an XZ-cross move) and the vertical plane
-///     (mouse X -> camera-right, mouse Y -> world up, an XY-cross move). Left/Right
-///     arrows move the target along camera-forward (depth); Up/Down arrows open/close
-///     the gripper. Number keys 1-6 toggle a lock on the matching joint: a locked joint
-///     is removed from the IK solve and holds its angle while the remaining joints do
-///     the work. 0 unlocks all joints.
+///     without ROS running. Pure keyboard control, fixed world-space axes, no mouse and
+///     no camera-relative logic: W/S move along world +Z/-Z, A/D along world -X/+X, Q/E
+///     along world -Y/+Y, Z/C close/open the gripper. A closed-loop damped least squares
+///     (DLS) / singularity-robust inverse solve on the geometric Jacobian updates all 6
+///     arm joints together in sync to follow the resulting target. Number keys 1-6 toggle
+///     a lock on the matching joint: a locked joint is removed from the IK solve and holds
+///     its angle while the remaining joints do the work. 0 unlocks all joints. PageUp/
+///     PageDown adjust the move speed live.
 /// </summary>
 public class ManualJointControl : MonoBehaviour
 {
@@ -27,19 +24,13 @@ public class ManualJointControl : MonoBehaviour
     public bool ManualModeEnabled { get => m_ManualModeEnabled; set => m_ManualModeEnabled = value; }
 
     [SerializeField]
-    float m_Sensitivity = 0.01f; // meters of end-effector motion per unit of mouse delta
+    float m_MoveSpeed = 0.3f; // meters/sec while holding a W/A/S/D/Q/E key
 
     [SerializeField]
-    float m_SpeedScale = 3f; // multiplies sensitivity, depth speed and the per-frame step clamp; PageUp/PageDown adjust it live
+    float m_SpeedScale = 3f; // multiplies move speed and the per-frame step clamp; PageUp/PageDown adjust it live
 
     [SerializeField]
-    float m_DepthSpeed = 0.3f; // meters/sec while holding Left/Right arrow
-
-    [SerializeField]
-    float m_GripperSpeed = 60f; // degrees/sec while holding Up/Down arrow
-
-    [SerializeField]
-    float m_DoubleClickWindow = 0.3f; // seconds between clicks to count as a double-click
+    float m_GripperSpeed = 60f; // degrees/sec while holding Z/C
 
     [SerializeField]
     float m_DampingLambda = 0.03f; // base DLS damping; larger = more stable near singularities, slower
@@ -61,10 +52,7 @@ public class ManualJointControl : MonoBehaviour
     ArticulationBody m_RightGripper;
     ArticulationBody m_LeftGripper;
     Transform m_EndEffector;
-    Camera m_Camera;
 
-    bool m_VerticalDragMode;
-    float m_LastClickTime = -1f;
     Vector3 m_DesiredPosition;
 
     [SerializeField]
@@ -108,7 +96,6 @@ public class ManualJointControl : MonoBehaviour
         m_RightGripper = m_j2n6s200.transform.Find(rightGripper).GetComponent<ArticulationBody>();
         m_LeftGripper = m_j2n6s200.transform.Find(leftGripper).GetComponent<ArticulationBody>();
 
-        m_Camera = Camera.main;
         m_DesiredPosition = m_EndEffector.position;
         m_TrajStartPos = m_EndEffector.position;
         m_TrajEndPos = m_EndEffector.position;
@@ -128,34 +115,16 @@ public class ManualJointControl : MonoBehaviour
             prevPos = jointPos;
         }
         m_MaxReachMeters += Vector3.Distance(prevPos, m_EndEffector.position);
-
-        Debug.Log($"[ManualJointControl diag] base={m_ArmBasePosition:F4} maxReach={m_MaxReachMeters:F4} " +
-            $"endEffectorStart={m_EndEffector.position:F4} desiredStart={m_DesiredPosition:F4} " +
-            $"distBaseToEE={Vector3.Distance(m_ArmBasePosition, m_EndEffector.position):F4}");
     }
 
-    // Debug diagnostics shown in OnGUI to help track down why dragging might not move the arm.
-    string m_DebugStatus = "no drag yet";
-    float m_LastDiagLogTime = -1f;
+    // Debug diagnostics shown in OnGUI to help track down why keys might not move the arm.
+    string m_DebugStatus = "no input yet";
 
     void Update()
     {
         if (!m_ManualModeEnabled)
         {
             return;
-        }
-
-        if (Input.GetMouseButtonDown(0))
-        {
-            if (m_LastClickTime >= 0f && Time.unscaledTime - m_LastClickTime <= m_DoubleClickWindow)
-            {
-                m_VerticalDragMode = !m_VerticalDragMode;
-                m_LastClickTime = -1f; // consume the double-click so a third click doesn't toggle again
-            }
-            else
-            {
-                m_LastClickTime = Time.unscaledTime;
-            }
         }
 
         UpdateJointLocks();
@@ -170,42 +139,31 @@ public class ManualJointControl : MonoBehaviour
         }
 
         var worldDelta = Vector3.zero;
+        var step = m_MoveSpeed * m_SpeedScale * Time.deltaTime;
 
-        if (Input.GetMouseButton(0) && m_Camera != null)
+        if (Input.GetKey(KeyCode.W))
         {
-            var mouseX = Input.GetAxis("Mouse X");
-            var mouseY = Input.GetAxis("Mouse Y");
-
-            if (m_VerticalDragMode)
-            {
-                // Vertical plane: combines camera-right (X) and world-up (Y) so a
-                // diagonal drag moves both axes at once (XY-cross) instead of only
-                // ever reading mouse Y.
-                worldDelta += m_Camera.transform.right * (mouseX * m_Sensitivity * m_SpeedScale);
-                worldDelta += Vector3.up * (mouseY * m_Sensitivity * m_SpeedScale);
-            }
-            else
-            {
-                // Horizontal (ground) plane: project the camera's right and forward
-                // onto world XZ so a diagonal drag combines both world X and world Z
-                // components (XZ-cross) instead of only ever reading mouse X.
-                var groundRight = Vector3.ProjectOnPlane(m_Camera.transform.right, Vector3.up).normalized;
-                var groundForward = Vector3.ProjectOnPlane(m_Camera.transform.forward, Vector3.up).normalized;
-                worldDelta += groundRight * (mouseX * m_Sensitivity * m_SpeedScale);
-                worldDelta += groundForward * (mouseY * m_Sensitivity * m_SpeedScale);
-            }
+            worldDelta += Vector3.forward * step;
         }
-
-        if (m_Camera != null)
+        if (Input.GetKey(KeyCode.S))
         {
-            if (Input.GetKey(KeyCode.RightArrow))
-            {
-                worldDelta += m_Camera.transform.forward * (m_DepthSpeed * m_SpeedScale * Time.deltaTime);
-            }
-            else if (Input.GetKey(KeyCode.LeftArrow))
-            {
-                worldDelta -= m_Camera.transform.forward * (m_DepthSpeed * m_SpeedScale * Time.deltaTime);
-            }
+            worldDelta -= Vector3.forward * step;
+        }
+        if (Input.GetKey(KeyCode.D))
+        {
+            worldDelta += Vector3.right * step;
+        }
+        if (Input.GetKey(KeyCode.A))
+        {
+            worldDelta -= Vector3.right * step;
+        }
+        if (Input.GetKey(KeyCode.E))
+        {
+            worldDelta += Vector3.up * step;
+        }
+        if (Input.GetKey(KeyCode.Q))
+        {
+            worldDelta -= Vector3.up * step;
         }
 
         if (worldDelta.sqrMagnitude > 0f)
@@ -213,13 +171,11 @@ public class ManualJointControl : MonoBehaviour
             m_DesiredPosition += worldDelta;
 
             // Clamp the desired position to a sphere around the arm base so it can never
-            // run away to a point many meters outside the workspace. Without this, a big
-            // mouse delta (e.g. a burst of batched movement over RDP, or a high
-            // m_SpeedScale) accumulates into m_DesiredPosition unbounded: once it's
-            // meters away from anything reachable, the solver saturates trying to chase
-            // it and further mouse drags in any direction barely change the resulting
-            // direction of travel, so control looks "dead" even though the solver is
-            // technically still running every frame.
+            // run away to a point many meters outside the workspace. Without this, a long
+            // key-hold at high speed scale accumulates into m_DesiredPosition unbounded:
+            // once it's meters away from anything reachable, the solver saturates trying
+            // to chase it and further input barely changes the resulting direction of
+            // travel, so control looks "dead" even though the solver is still running.
             var offsetFromBase = m_DesiredPosition - m_ArmBasePosition;
             var maxRadius = m_MaxReachMeters * m_ReachSafetyMargin;
             if (offsetFromBase.magnitude > maxRadius)
@@ -230,19 +186,15 @@ public class ManualJointControl : MonoBehaviour
             // Re-plan the minimum-jerk trajectory: start from wherever the smoothed
             // point currently is (for continuity, no pop) and ease toward the new goal
             // over m_TrajectoryDuration. Re-planning every time the goal moves keeps
-            // this responsive to the live mouse drag while still removing the jerk of
-            // feeding the raw goal straight into the IK solver.
+            // this responsive to held keys while still removing the jerk of feeding the
+            // raw goal straight into the IK solver.
             m_TrajStartPos = EvaluateMinimumJerkTrajectory(Time.time);
             m_TrajStartTime = Time.time;
             m_TrajEndPos = m_DesiredPosition;
         }
-        else if (Input.GetMouseButton(0))
-        {
-            m_DebugStatus = m_Camera == null ? "camera is null" : "mouse held but delta is zero";
-        }
 
         // Closed-loop: every frame, drive the actual end effector toward the smoothed
-        // (minimum-jerk) point on the current trajectory, not the raw mouse-driven goal.
+        // (minimum-jerk) point on the current trajectory, not the raw key-driven goal.
         // This self-corrects any linearization error from the previous step instead of
         // blindly trusting an open-loop delta application, while the trajectory layer
         // keeps the motion profile smooth (zero velocity/acceleration at each re-plan).
@@ -251,27 +203,11 @@ public class ManualJointControl : MonoBehaviour
         SolveAndApplyIkStep(error);
         UpdateUnreachableFlag(Vector3.Distance(m_DesiredPosition, m_EndEffector.position));
 
-        if (Input.GetMouseButton(0) && Time.unscaledTime - m_LastDiagLogTime > 0.25f)
-        {
-            m_LastDiagLogTime = Time.unscaledTime;
-            var jointTargets = string.Empty;
-            for (var i = 0; i < k_NumRobotJoints; i++)
-            {
-                jointTargets += $"J{i + 1}={m_ArmJoints[i].xDrive.target:F2}({(m_ArmJoints[i].jointType)},lock={m_JointLocked[i]}) ";
-            }
-            Debug.Log($"[ManualJointControl diag] mouseXY=({Input.GetAxis("Mouse X"):F3},{Input.GetAxis("Mouse Y"):F3}) " +
-                $"desired={m_DesiredPosition:F4} actual={m_EndEffector.position:F4} " +
-                $"distBase={Vector3.Distance(m_DesiredPosition, m_ArmBasePosition):F4} " +
-                $"maxRadius={m_MaxReachMeters * m_ReachSafetyMargin:F4} " +
-                $"trackErr={Vector3.Distance(m_DesiredPosition, m_EndEffector.position):F4} unreachable={m_TargetUnreachable} " +
-                $"timeScale={Time.timeScale:F3} status=[{m_DebugStatus}] joints={jointTargets}");
-        }
-
-        if (Input.GetKey(KeyCode.UpArrow))
+        if (Input.GetKey(KeyCode.C))
         {
             JogGripper(m_GripperSpeed * Time.deltaTime);
         }
-        else if (Input.GetKey(KeyCode.DownArrow))
+        else if (Input.GetKey(KeyCode.Z))
         {
             JogGripper(-m_GripperSpeed * Time.deltaTime);
         }
@@ -303,8 +239,8 @@ public class ManualJointControl : MonoBehaviour
     ///     (Flash &amp; Hogan's minimum-jerk model of smooth point-to-point motion — the
     ///     unique trajectory shape that minimizes the integral of squared jerk subject to
     ///     zero velocity and acceleration at both endpoints). Re-planned from the current
-    ///     smoothed point every time the mouse goal moves, so the end effector always
-    ///     eases in and out instead of snapping to follow the cursor 1:1.
+    ///     smoothed point every time the goal moves, so the end effector always eases in
+    ///     and out instead of snapping straight to the key-driven target.
     /// </summary>
     Vector3 EvaluateMinimumJerkTrajectory(float time)
     {
@@ -418,11 +354,9 @@ public class ManualJointControl : MonoBehaviour
             // hard limits (lowerLimit == upperLimit == 0, e.g. a continuous base joint)
             // has nothing above to stop drive.target accumulating every single frame
             // this runs (which is every frame there's tracking error, not just frames
-            // with mouse input) - observed reaching tens of thousands of degrees after
-            // a couple minutes of a stuck drag. A PD position drive given a setpoint
-            // that far from reality doesn't track faster, it just stalls, which is what
-            // "mouse isn't giving direction" actually was: the joints were saturated
-            // chasing an astronomically stale target, not failing to read the mouse.
+            // with fresh input) - observed reaching tens of thousands of degrees after
+            // a couple minutes stuck. A PD position drive given a setpoint that far from
+            // reality doesn't track faster, it just stalls.
             var actualAngleDeg = joint.jointPosition.dofCount > 0
                 ? joint.jointPosition[0] * Mathf.Rad2Deg
                 : newTarget;
@@ -546,13 +480,12 @@ public class ManualJointControl : MonoBehaviour
             return;
         }
 
-        GUILayout.BeginArea(new Rect(10, 60, 360, 320), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 360, 300), GUI.skin.box);
         GUILayout.Label("Manual IK Control (all joints move in sync)");
         GUILayout.Label($"Max reach from base: {m_MaxReachMeters:F3} m (base: {m_ArmBasePosition:F3})");
         GUILayout.Label($"Debug: {m_DebugStatus}");
-        GUILayout.Label($"Drag mode: {(m_VerticalDragMode ? "Vertical plane (X=camera-right, Y=world-up)" : "Horizontal plane (X=ground-right, Y=ground-forward)")} — double-click to switch, diagonal drag combines both axes");
-        GUILayout.Label("Left/Right arrow: move depth (camera forward/back)");
-        GUILayout.Label("Up/Down arrow: open/close gripper");
+        GUILayout.Label("W/S: world Z+/Z-   A/D: world X-/X+   Q/E: world Y-/Y+");
+        GUILayout.Label("Z/C: close/open gripper");
         var lockState = string.Empty;
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
