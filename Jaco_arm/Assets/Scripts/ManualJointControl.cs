@@ -53,6 +53,12 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField]
     float m_MaxTargetLeadDegrees = 20f; // anti-windup: xDrive.target is never allowed to lead the joint's actual measured angle by more than this
 
+    [SerializeField]
+    float m_DriveStiffness = 10000f; // PD position-drive gain applied to every joint/gripper xDrive at Start()
+
+    [SerializeField]
+    float m_DriveDamping = 100f; // PD position-drive damping applied to every joint/gripper xDrive at Start()
+
     ArticulationBody[] m_ArmJoints;
     readonly bool[] m_JointLocked = new bool[k_NumRobotJoints];
     ArticulationBody m_RightGripper;
@@ -102,6 +108,22 @@ public class ManualJointControl : MonoBehaviour
         m_RightGripper = m_j2n6s200.transform.Find(rightGripper).GetComponent<ArticulationBody>();
         m_LeftGripper = m_j2n6s200.transform.Find(leftGripper).GetComponent<ArticulationBody>();
 
+        // This scene's joints come straight out of the URDF import with xDrive.stiffness
+        // and damping both at 0 - nothing else in this scene (no Controller/JointControl,
+        // that's only added in SampleScene/GrapeLeavesScene) ever configures them. With
+        // stiffness=0 and damping=0, PhysX's drive force is stiffness*(target-pos) +
+        // damping*(targetVel-vel) = 0 regardless of what xDrive.target is set to in
+        // SolveAndApplyIkStep, so the solver's output never actually moved anything - any
+        // motion seen was pure leftover momentum/gravity, not control. Seed target to the
+        // joint's current angle first so turning the drive on doesn't snap it toward the
+        // default target of 0.
+        foreach (var joint in m_ArmJoints)
+        {
+            ConfigureDrive(joint);
+        }
+        ConfigureDrive(m_RightGripper);
+        ConfigureDrive(m_LeftGripper);
+
         m_DesiredPosition = m_EndEffector.position;
         m_TrajStartPos = m_EndEffector.position;
         m_TrajEndPos = m_EndEffector.position;
@@ -121,6 +143,15 @@ public class ManualJointControl : MonoBehaviour
             prevPos = jointPos;
         }
         m_MaxReachMeters += Vector3.Distance(prevPos, m_EndEffector.position);
+    }
+
+    void ConfigureDrive(ArticulationBody joint)
+    {
+        var drive = joint.xDrive;
+        drive.stiffness = m_DriveStiffness;
+        drive.damping = m_DriveDamping;
+        drive.target = joint.jointPosition.dofCount > 0 ? joint.jointPosition[0] * Mathf.Rad2Deg : drive.target;
+        joint.xDrive = drive;
     }
 
     // Debug diagnostics shown in OnGUI to help track down why keys might not move the arm.
