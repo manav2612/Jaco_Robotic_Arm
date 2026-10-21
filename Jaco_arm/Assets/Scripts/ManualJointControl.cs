@@ -54,10 +54,16 @@ public class ManualJointControl : MonoBehaviour
     float m_MaxTargetLeadDegrees = 20f; // anti-windup: xDrive.target is never allowed to lead the joint's actual measured angle by more than this
 
     [SerializeField]
-    float m_DriveStiffness = 10000f; // PD position-drive gain applied to every joint/gripper xDrive at Start()
+    float m_ArmDriveStiffness = 10000f; // PD position-drive gain applied to the 6 arm joints' xDrive at Start()
 
     [SerializeField]
-    float m_DriveDamping = 100f; // PD position-drive damping applied to every joint/gripper xDrive at Start()
+    float m_ArmDriveDamping = 1000f; // PD position-drive damping for the arm joints; ~10:1 stiffness:damping to curb underdamped wobble
+
+    [SerializeField]
+    float m_GripperDriveStiffness = 200f; // gripper fingers are ~0.01kg vs ~0.5-1kg arm links, so they need much softer gains to avoid oscillating
+
+    [SerializeField]
+    float m_GripperDriveDamping = 20f; // kept at the same ~10:1 ratio as the arm gains
 
     ArticulationBody[] m_ArmJoints;
     readonly bool[] m_JointLocked = new bool[k_NumRobotJoints];
@@ -119,10 +125,10 @@ public class ManualJointControl : MonoBehaviour
         // default target of 0.
         foreach (var joint in m_ArmJoints)
         {
-            ConfigureDrive(joint);
+            ConfigureDrive(joint, m_ArmDriveStiffness, m_ArmDriveDamping);
         }
-        ConfigureDrive(m_RightGripper);
-        ConfigureDrive(m_LeftGripper);
+        ConfigureDrive(m_RightGripper, m_GripperDriveStiffness, m_GripperDriveDamping);
+        ConfigureDrive(m_LeftGripper, m_GripperDriveStiffness, m_GripperDriveDamping);
 
         m_DesiredPosition = m_EndEffector.position;
         m_TrajStartPos = m_EndEffector.position;
@@ -145,11 +151,11 @@ public class ManualJointControl : MonoBehaviour
         m_MaxReachMeters += Vector3.Distance(prevPos, m_EndEffector.position);
     }
 
-    void ConfigureDrive(ArticulationBody joint)
+    static void ConfigureDrive(ArticulationBody joint, float stiffness, float damping)
     {
         var drive = joint.xDrive;
-        drive.stiffness = m_DriveStiffness;
-        drive.damping = m_DriveDamping;
+        drive.stiffness = stiffness;
+        drive.damping = damping;
         drive.target = joint.jointPosition.dofCount > 0 ? joint.jointPosition[0] * Mathf.Rad2Deg : drive.target;
         joint.xDrive = drive;
     }
