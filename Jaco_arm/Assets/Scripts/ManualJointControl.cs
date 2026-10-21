@@ -4,19 +4,24 @@ using UnityEngine;
 ///     Manual Cartesian jog control for the j2n6s200 arm's end effector, for testing
 ///     without ROS running. Fixed world-space axes, no camera-relative logic: W/S move
 ///     along world +Z/-Z, A/D along world -X/+X, Q/E along world -Y/+Y, Z/C close/open
-///     the gripper. Left-click drag additionally moves in the world X/Z plane (mouse
-///     X/Y) and right-click drag moves along world Y (up/down) — both mapped to the same
-///     fixed world axes as the keys, not camera-relative, so they stay predictable
-///     regardless of view angle. A closed-loop damped least squares (DLS) /
-///     singularity-robust inverse solve on the geometric Jacobian updates all 6 arm
-///     joints together in sync to follow the resulting target. Number keys 1-6 toggle
-///     a lock on the matching joint: a locked joint is removed from the IK solve and holds
-///     its angle while the remaining joints do the work. 0 unlocks all joints. PageUp/
-///     PageDown adjust the move speed live.
+///     the gripper. Left-click drag moves in a world-space plane selected by
+///     <see cref="DragPlane"/> (mouse X/Y map onto that plane's two axes); Tab cycles
+///     the active plane XZ → XY → YZ → XZ. Right-click drag always moves along world Y
+///     (up/down) regardless of the selected plane. The mouse scroll wheel also
+///     opens/closes the gripper, additively with Z/C. All mouse/keyboard input is mapped
+///     to fixed world axes, not camera-relative, so it stays predictable regardless of
+///     view angle. A closed-loop damped least squares (DLS) / singularity-robust inverse
+///     solve on the geometric Jacobian updates all 6 arm joints together in sync to
+///     follow the resulting target. Number keys 1-6 toggle a lock on the matching joint:
+///     a locked joint is removed from the IK solve and holds its angle while the
+///     remaining joints do the work. 0 unlocks all joints. PageUp/PageDown adjust the
+///     move speed live.
 /// </summary>
 public class ManualJointControl : MonoBehaviour
 {
     const int k_NumRobotJoints = 6;
+
+    enum DragPlane { XZ, XY, YZ }
 
     [SerializeField]
     GameObject m_j2n6s200;
@@ -31,6 +36,12 @@ public class ManualJointControl : MonoBehaviour
 
     [SerializeField]
     float m_MouseSensitivity = 0.0015f; // meters of desired-position movement per mouse-axis-delta unit while dragging
+
+    [SerializeField]
+    DragPlane m_DragPlane = DragPlane.XZ; // left-drag's active plane; Tab cycles XZ -> XY -> YZ -> XZ
+
+    [SerializeField]
+    float m_ScrollGripperSensitivity = 40f; // degrees per unit of "Mouse ScrollWheel" axis input
 
     [SerializeField]
     float m_SpeedScale = 3f; // multiplies move speed and the per-frame step clamp; PageUp/PageDown adjust it live
@@ -187,6 +198,11 @@ public class ManualJointControl : MonoBehaviour
             m_SpeedScale = Mathf.Max(m_SpeedScale / 1.25f, 0.2f);
         }
 
+        if (Input.GetKeyDown(KeyCode.Tab))
+        {
+            m_DragPlane = (DragPlane)(((int)m_DragPlane + 1) % 3);
+        }
+
         var worldDelta = Vector3.zero;
         var step = m_MoveSpeed * m_SpeedScale * Time.deltaTime;
 
@@ -218,14 +234,29 @@ public class ManualJointControl : MonoBehaviour
         // Mouse drag, mapped to the same fixed world axes as the keys (not
         // camera-relative) so it combines predictably with WASD/QE and stays safe
         // under the reach clamp and anti-windup clamp below regardless of how bursty
-        // the raw mouse delta is for a given frame (e.g. over RDP).
+        // the raw mouse delta is for a given frame (e.g. over RDP). Left-drag's two
+        // axes depend on m_DragPlane (cycled with Tab); right-drag is always world Y
+        // regardless of plane, so the third axis is still reachable in every mode.
         var mouseScale = m_MouseSensitivity * m_SpeedScale;
         if (Input.GetMouseButton(0))
         {
             var mouseX = Input.GetAxis("Mouse X");
             var mouseY = Input.GetAxis("Mouse Y");
-            worldDelta += Vector3.right * (mouseX * mouseScale);
-            worldDelta += Vector3.forward * (mouseY * mouseScale);
+            switch (m_DragPlane)
+            {
+                case DragPlane.XZ:
+                    worldDelta += Vector3.right * (mouseX * mouseScale);
+                    worldDelta += Vector3.forward * (mouseY * mouseScale);
+                    break;
+                case DragPlane.XY:
+                    worldDelta += Vector3.right * (mouseX * mouseScale);
+                    worldDelta += Vector3.up * (mouseY * mouseScale);
+                    break;
+                case DragPlane.YZ:
+                    worldDelta += Vector3.forward * (mouseX * mouseScale);
+                    worldDelta += Vector3.up * (mouseY * mouseScale);
+                    break;
+            }
         }
         if (Input.GetMouseButton(1))
         {
@@ -286,6 +317,14 @@ public class ManualJointControl : MonoBehaviour
         else if (Input.GetKey(KeyCode.Z))
         {
             JogGripper(-m_GripperSpeed * Time.deltaTime);
+        }
+
+        // Scroll wheel additionally jogs the gripper, same sign convention as the keys
+        // above (scroll up ~ C, scroll down ~ Z), additive rather than replacing them.
+        var scroll = Input.GetAxis("Mouse ScrollWheel");
+        if (Mathf.Abs(scroll) > 0f)
+        {
+            JogGripper(scroll * m_ScrollGripperSensitivity);
         }
     }
 
@@ -561,8 +600,8 @@ public class ManualJointControl : MonoBehaviour
         GUILayout.Label($"Max reach from base: {m_MaxReachMeters:F3} m (base: {m_ArmBasePosition:F3})");
         GUILayout.Label($"Debug: {m_DebugStatus}");
         GUILayout.Label("W/S: world Z+/Z-   A/D: world X-/X+   Q/E: world Y-/Y+");
-        GUILayout.Label("Left-drag: world X/Z plane   Right-drag: world Y (up/down)");
-        GUILayout.Label("Z/C: close/open gripper");
+        GUILayout.Label($"Left-drag plane: {m_DragPlane} (Tab to cycle)   Right-drag: world Y (up/down)");
+        GUILayout.Label("Z/C or scroll wheel: close/open gripper");
         var lockState = string.Empty;
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
