@@ -310,13 +310,16 @@ public class ManualJointControl : MonoBehaviour
                 + $"desired={m_DesiredPosition:F3} actual={m_EndEffector.position:F3}");
         }
 
+        var gripperInputThisFrame = 0f;
         if (Input.GetKey(KeyCode.C))
         {
-            JogGripper(m_GripperSpeed * Time.deltaTime);
+            gripperInputThisFrame = m_GripperSpeed * Time.deltaTime;
+            JogGripper(gripperInputThisFrame);
         }
         else if (Input.GetKey(KeyCode.Z))
         {
-            JogGripper(-m_GripperSpeed * Time.deltaTime);
+            gripperInputThisFrame = -m_GripperSpeed * Time.deltaTime;
+            JogGripper(gripperInputThisFrame);
         }
 
         // Scroll wheel additionally jogs the gripper, same sign convention as the keys
@@ -324,9 +327,29 @@ public class ManualJointControl : MonoBehaviour
         var scroll = Input.GetAxis("Mouse ScrollWheel");
         if (Mathf.Abs(scroll) > 0f)
         {
+            gripperInputThisFrame += scroll * m_ScrollGripperSensitivity;
             JogGripper(scroll * m_ScrollGripperSensitivity);
         }
+
+        // Temporary diagnostic: confirm the gripper references are resolved and that
+        // xDrive.target / actual jointPosition are moving in response to input.
+        if (Mathf.Abs(gripperInputThisFrame) > 0f && Time.unscaledTime - m_LastGripperDiagLogTime > 0.25f)
+        {
+            m_LastGripperDiagLogTime = Time.unscaledTime;
+            var rightNull = m_RightGripper == null;
+            var leftNull = m_LeftGripper == null;
+            var rightTarget = rightNull ? float.NaN : m_RightGripper.xDrive.target;
+            var rightActualDeg = (!rightNull && m_RightGripper.jointPosition.dofCount > 0)
+                ? m_RightGripper.jointPosition[0] * Mathf.Rad2Deg
+                : float.NaN;
+            var rightForceLimit = rightNull ? float.NaN : m_RightGripper.xDrive.forceLimit;
+            var rightStiffness = rightNull ? float.NaN : m_RightGripper.xDrive.stiffness;
+            Debug.Log($"[gripper-diag] input={gripperInputThisFrame:F3}deg rightNull={rightNull} leftNull={leftNull} "
+                + $"rightTarget={rightTarget:F3} rightActual={rightActualDeg:F3} rightForceLimit={rightForceLimit:F3} rightStiffness={rightStiffness:F3}");
+        }
     }
+
+    float m_LastGripperDiagLogTime = -1f;
 
     /// <summary>
     ///     Joint lock: keys 1-6 (top row or keypad) toggle the lock on joint 1-6, 0 clears
