@@ -126,12 +126,18 @@ public class ManualJointControl : MonoBehaviour
     // Debug diagnostics shown in OnGUI to help track down why keys might not move the arm.
     string m_DebugStatus = "no input yet";
 
+    // Temporary diagnostic: logs commanded direction vs. actual end-effector displacement
+    // per frame, throttled, to catch an axis swap/sign-flip between input and real motion.
+    float m_LastDiagLogTime = -1f;
+
     void Update()
     {
         if (!m_ManualModeEnabled)
         {
             return;
         }
+
+        var eePosBeforeThisFrame = m_EndEffector.position;
 
         UpdateJointLocks();
 
@@ -226,6 +232,15 @@ public class ManualJointControl : MonoBehaviour
         var error = smoothedTarget - m_EndEffector.position;
         SolveAndApplyIkStep(error);
         UpdateUnreachableFlag(Vector3.Distance(m_DesiredPosition, m_EndEffector.position));
+
+        if (worldDelta.sqrMagnitude > 0f && Time.unscaledTime - m_LastDiagLogTime > 0.25f)
+        {
+            m_LastDiagLogTime = Time.unscaledTime;
+            var actualDelta = m_EndEffector.position - eePosBeforeThisFrame;
+            Debug.Log($"[dir-diag] commanded={worldDelta:F5} (dir={worldDelta.normalized:F3}) "
+                + $"actualEEDelta={actualDelta:F5} (dir={(actualDelta.sqrMagnitude > 1e-12f ? actualDelta.normalized : Vector3.zero):F3}) "
+                + $"desired={m_DesiredPosition:F3} actual={m_EndEffector.position:F3}");
+        }
 
         if (Input.GetKey(KeyCode.C))
         {
