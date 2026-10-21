@@ -2,11 +2,14 @@ using UnityEngine;
 
 /// <summary>
 ///     Manual Cartesian jog control for the j2n6s200 arm's end effector, for testing
-///     without ROS running. Pure keyboard control, fixed world-space axes, no mouse and
-///     no camera-relative logic: W/S move along world +Z/-Z, A/D along world -X/+X, Q/E
-///     along world -Y/+Y, Z/C close/open the gripper. A closed-loop damped least squares
-///     (DLS) / singularity-robust inverse solve on the geometric Jacobian updates all 6
-///     arm joints together in sync to follow the resulting target. Number keys 1-6 toggle
+///     without ROS running. Fixed world-space axes, no camera-relative logic: W/S move
+///     along world +Z/-Z, A/D along world -X/+X, Q/E along world -Y/+Y, Z/C close/open
+///     the gripper. Left-click drag additionally moves in the world X/Z plane (mouse
+///     X/Y) and right-click drag moves along world Y (up/down) — both mapped to the same
+///     fixed world axes as the keys, not camera-relative, so they stay predictable
+///     regardless of view angle. A closed-loop damped least squares (DLS) /
+///     singularity-robust inverse solve on the geometric Jacobian updates all 6 arm
+///     joints together in sync to follow the resulting target. Number keys 1-6 toggle
 ///     a lock on the matching joint: a locked joint is removed from the IK solve and holds
 ///     its angle while the remaining joints do the work. 0 unlocks all joints. PageUp/
 ///     PageDown adjust the move speed live.
@@ -25,6 +28,9 @@ public class ManualJointControl : MonoBehaviour
 
     [SerializeField]
     float m_MoveSpeed = 0.3f; // meters/sec while holding a W/A/S/D/Q/E key
+
+    [SerializeField]
+    float m_MouseSensitivity = 0.0015f; // meters of desired-position movement per mouse-axis-delta unit while dragging
 
     [SerializeField]
     float m_SpeedScale = 3f; // multiplies move speed and the per-frame step clamp; PageUp/PageDown adjust it live
@@ -164,6 +170,24 @@ public class ManualJointControl : MonoBehaviour
         if (Input.GetKey(KeyCode.Q))
         {
             worldDelta -= Vector3.up * step;
+        }
+
+        // Mouse drag, mapped to the same fixed world axes as the keys (not
+        // camera-relative) so it combines predictably with WASD/QE and stays safe
+        // under the reach clamp and anti-windup clamp below regardless of how bursty
+        // the raw mouse delta is for a given frame (e.g. over RDP).
+        var mouseScale = m_MouseSensitivity * m_SpeedScale;
+        if (Input.GetMouseButton(0))
+        {
+            var mouseX = Input.GetAxis("Mouse X");
+            var mouseY = Input.GetAxis("Mouse Y");
+            worldDelta += Vector3.right * (mouseX * mouseScale);
+            worldDelta += Vector3.forward * (mouseY * mouseScale);
+        }
+        if (Input.GetMouseButton(1))
+        {
+            var mouseY = Input.GetAxis("Mouse Y");
+            worldDelta += Vector3.up * (mouseY * mouseScale);
         }
 
         if (worldDelta.sqrMagnitude > 0f)
@@ -485,6 +509,7 @@ public class ManualJointControl : MonoBehaviour
         GUILayout.Label($"Max reach from base: {m_MaxReachMeters:F3} m (base: {m_ArmBasePosition:F3})");
         GUILayout.Label($"Debug: {m_DebugStatus}");
         GUILayout.Label("W/S: world Z+/Z-   A/D: world X-/X+   Q/E: world Y-/Y+");
+        GUILayout.Label("Left-drag: world X/Z plane   Right-drag: world Y (up/down)");
         GUILayout.Label("Z/C: close/open gripper");
         var lockState = string.Empty;
         for (var i = 0; i < k_NumRobotJoints; i++)
