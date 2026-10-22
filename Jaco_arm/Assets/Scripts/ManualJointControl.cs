@@ -16,12 +16,31 @@ using UnityEngine;
 ///     a locked joint is removed from the IK solve and holds its angle while the
 ///     remaining joints do the work. 0 unlocks all joints. PageUp/PageDown adjust the
 ///     move speed live.
+///     <para>
+///     A second, independent input layer simulates a planned MouthX wearable controller
+///     (tongue/jaw/head-tilt gestures) alongside the WASD/mouse scheme above, per an
+///     AURAX TECH control-hypothesis spec. Hold Space as the enable gate ("tongue click
+///     from idle"); while held: arrow keys = Jaw X/Y (world X/Z translation), [ / ] =
+///     Jaw Z (world Y translation), J/L = Tongue X (yaw in Approach mode, "proportional
+///     roll" in Fine mode - same keys, different wrist joint), I/K = Tongue Y (pitch,
+///     same joint in both modes), , / . = lateral head tilt (roll, Approach mode only -
+///     disabled in Fine mode). Tongue Z (gripper) reuses the existing Z/C/scroll gripper
+///     control rather than a separate binding. M toggles Approach/Fine manipulation mode
+///     (the "short suction" switch) independent of the Space gate. Orientation
+///     (yaw/pitch/roll) is only approximated: there's no real 6-DOF position+orientation
+///     IK here, so each jogs a single wrist joint directly and auto-excludes it from the
+///     position solver for that frame (see <see cref="m_MouthXAutoLock"/>) rather than
+///     truly decoupling position from orientation. Pressure/BLE-loss fail-safes from the
+///     spec have no keyboard equivalent and are not simulated.
+///     </para>
 /// </summary>
 public class ManualJointControl : MonoBehaviour
 {
     const int k_NumRobotJoints = 6;
 
     enum DragPlane { XZ, XY, YZ }
+
+    enum MouthXMode { Approach, FineManipulation }
 
     [SerializeField]
     GameObject m_j2n6s200;
@@ -76,8 +95,25 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField]
     float m_GripperDriveDamping = 20f; // kept at the same ~10:1 ratio as the arm gains
 
+    [SerializeField]
+    MouthXMode m_MouthXMode = MouthXMode.Approach; // toggled by M ("short suction" switch in the spec)
+
+    [SerializeField]
+    float m_FineModeSpeedFactor = 0.25f; // Jaw-driven translation is slower in Fine manipulation mode, per the spec
+
+    [SerializeField]
+    float m_WristJogSpeed = 30f; // degrees/sec for the Tongue X/Y and head-tilt wrist-joint jogs
+
     ArticulationBody[] m_ArmJoints;
     readonly bool[] m_JointLocked = new bool[k_NumRobotJoints];
+
+    // Set true (per-frame, cleared every Update) for a joint actively being jogged by the
+    // MouthX orientation inputs, so SolveAndApplyIkStep excludes it from the position
+    // solve for that frame only - distinct from m_JointLocked (the manual 1-6 toggle),
+    // which this never touches, so the manual lock state is always restored the instant
+    // the MouthX jog input is released.
+    readonly bool[] m_MouthXAutoLock = new bool[k_NumRobotJoints];
+
     ArticulationBody m_RightGripper;
     ArticulationBody m_LeftGripper;
     Transform m_EndEffector;
@@ -264,6 +300,8 @@ public class ManualJointControl : MonoBehaviour
             worldDelta += Vector3.up * (mouseY * mouseScale);
         }
 
+        worldDelta += UpdateMouthXSimInput();
+
         if (worldDelta.sqrMagnitude > 0f)
         {
             m_DesiredPosition += worldDelta;
@@ -415,7 +453,7 @@ public class ManualJointControl : MonoBehaviour
         var jacobianColumns = new Vector3[k_NumRobotJoints];
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
-            if (m_JointLocked[i])
+            if (m_JointLocked[i] || m_MouthXAutoLock[i])
             {
                 jacobianColumns[i] = Vector3.zero; // locked: contributes nothing to the solve
                 continue;
@@ -471,7 +509,7 @@ public class ManualJointControl : MonoBehaviour
         var totalDqDeg = 0f;
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
-            if (m_JointLocked[i])
+            if (m_JointLocked[i] || m_MouthXAutoLock[i])
             {
                 continue;
             }
@@ -611,6 +649,130 @@ public class ManualJointControl : MonoBehaviour
         gripper.xDrive = drive;
     }
 
+    /// <summary>
+    ///     MouthX simulation layer: a second, independent input scheme (arrow keys,
+    ///     [ / ], I/J/K/L, , / .) standing in for a planned wearable's tongue/jaw/head-tilt
+    ///     gestures, gated behind holding Space (simulating "tongue click from idle").
+    ///     Jaw X/Y/Z contribute straight into the same worldDelta the WASD/mouse scheme
+    ///     uses (returned here, added by the caller), so position control is shared with
+    ///     no solver changes. Tongue X/Y and head-tilt approximate orientation by jogging
+    ///     a single wrist joint directly via <see cref="JogWristJoint"/> rather than a
+    ///     true position+orientation IK solve - see the class doc comment for why.
+    /// </summary>
+    Vector3 UpdateMouthXSimInput()
+    {
+        System.Array.Clear(m_MouthXAutoLock, 0, k_NumRobotJoints);
+
+        if (Input.GetKeyDown(KeyCode.M))
+        {
+            m_MouthXMode = m_MouthXMode == MouthXMode.Approach ? MouthXMode.FineManipulation : MouthXMode.Approach;
+        }
+
+        if (!Input.GetKey(KeyCode.Space))
+        {
+            return Vector3.zero; // enable gate released: everything below stays at rest
+        }
+
+        var fineFactor = m_MouthXMode == MouthXMode.FineManipulation ? m_FineModeSpeedFactor : 1f;
+        var jawStep = m_MoveSpeed * m_SpeedScale * fineFactor * Time.deltaTime;
+        var positionDelta = Vector3.zero;
+
+        // Jaw X/Y: world X/Z horizontal translation, the same plane W/A/S/D already use.
+        if (Input.GetKey(KeyCode.RightArrow))
+        {
+            positionDelta += Vector3.right * jawStep;
+        }
+        if (Input.GetKey(KeyCode.LeftArrow))
+        {
+            positionDelta -= Vector3.right * jawStep;
+        }
+        if (Input.GetKey(KeyCode.UpArrow))
+        {
+            positionDelta += Vector3.forward * jawStep;
+        }
+        if (Input.GetKey(KeyCode.DownArrow))
+        {
+            positionDelta -= Vector3.forward * jawStep;
+        }
+
+        // Jaw Z: world Y vertical translation.
+        if (Input.GetKey(KeyCode.RightBracket))
+        {
+            positionDelta += Vector3.up * jawStep;
+        }
+        if (Input.GetKey(KeyCode.LeftBracket))
+        {
+            positionDelta -= Vector3.up * jawStep;
+        }
+
+        var wristStep = m_WristJogSpeed * Time.deltaTime;
+
+        // Tongue X: Yaw (joint 4) in Approach mode, "proportional roll" (joint 6) in Fine
+        // mode - same keys, different joint depending on mode, per the spec table.
+        var tongueXJoint = m_MouthXMode == MouthXMode.Approach ? 3 : 5;
+        if (Input.GetKey(KeyCode.L))
+        {
+            JogWristJoint(tongueXJoint, wristStep);
+        }
+        else if (Input.GetKey(KeyCode.J))
+        {
+            JogWristJoint(tongueXJoint, -wristStep);
+        }
+
+        // Tongue Y: Pitch (joint 5), unchanged between modes per the spec table.
+        if (Input.GetKey(KeyCode.I))
+        {
+            JogWristJoint(4, wristStep);
+        }
+        else if (Input.GetKey(KeyCode.K))
+        {
+            JogWristJoint(4, -wristStep);
+        }
+
+        // Lateral head tilt: Roll (joint 6), Approach mode only - disabled in Fine mode
+        // per the spec table.
+        if (m_MouthXMode == MouthXMode.Approach)
+        {
+            if (Input.GetKey(KeyCode.Period))
+            {
+                JogWristJoint(5, wristStep);
+            }
+            else if (Input.GetKey(KeyCode.Comma))
+            {
+                JogWristJoint(5, -wristStep);
+            }
+        }
+
+        // Tongue Z while enabled: open/close gripper - shares the existing Z/C/scroll
+        // gripper control below in Update() rather than duplicating it here.
+
+        return positionDelta;
+    }
+
+    /// <summary>
+    ///     Directly jogs one wrist joint's xDrive.target (same simple pattern as
+    ///     JogGripper/ApplyGripperDelta) and marks it in m_MouthXAutoLock so
+    ///     SolveAndApplyIkStep excludes it from the position Jacobian this frame - without
+    ///     that, the position solver would read this joint's motion as unwanted drift and
+    ///     fight to correct it, cancelling the orientation jog out.
+    /// </summary>
+    void JogWristJoint(int jointIndex, float degreesDelta)
+    {
+        m_MouthXAutoLock[jointIndex] = true;
+
+        var joint = m_ArmJoints[jointIndex];
+        var drive = joint.xDrive;
+        var newTarget = drive.target + degreesDelta;
+
+        if (drive.lowerLimit != 0f || drive.upperLimit != 0f)
+        {
+            newTarget = Mathf.Clamp(newTarget, drive.lowerLimit, drive.upperLimit);
+        }
+
+        drive.target = newTarget;
+        joint.xDrive = drive;
+    }
+
     void OnGUI()
     {
         if (!m_ManualModeEnabled)
@@ -618,13 +780,19 @@ public class ManualJointControl : MonoBehaviour
             return;
         }
 
-        GUILayout.BeginArea(new Rect(10, 60, 360, 300), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 380, 420), GUI.skin.box);
         GUILayout.Label("Manual IK Control (all joints move in sync)");
         GUILayout.Label($"Max reach from base: {m_MaxReachMeters:F3} m (base: {m_ArmBasePosition:F3})");
         GUILayout.Label($"Debug: {m_DebugStatus}");
         GUILayout.Label("W/S: world Z+/Z-   A/D: world X-/X+   Q/E: world Y-/Y+");
         GUILayout.Label($"Left-drag plane: {m_DragPlane} (Tab to cycle)   Right-drag: world Y (up/down)");
         GUILayout.Label("Z/C or scroll wheel: close/open gripper");
+        GUILayout.Label($"-- MouthX sim (hold Space to enable) -- mode: {m_MouthXMode}  (M to switch)");
+        GUILayout.Label("Arrows: Jaw X/Y (world X/Z)   [ / ]: Jaw Z (world Y)");
+        GUILayout.Label(m_MouthXMode == MouthXMode.Approach
+            ? "J/L: Tongue X = Yaw   I/K: Tongue Y = Pitch   ,/.: head tilt = Roll"
+            : "J/L: Tongue X = Roll (proportional)   I/K: Tongue Y = Pitch   head tilt: disabled");
+        GUILayout.Label("Tongue Z (gripper) shares Z/C/scroll above. No pressure/BLE fail-safes simulated.");
         var lockState = string.Empty;
         for (var i = 0; i < k_NumRobotJoints; i++)
         {
