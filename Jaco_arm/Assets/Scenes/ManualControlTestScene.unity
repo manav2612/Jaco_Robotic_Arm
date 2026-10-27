@@ -9732,13 +9732,24 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ManualJointControl
   m_j2n6s200: {fileID: 2137049589}
   m_ManualModeEnabled: 1
-  m_Sensitivity: 0.01
-  m_DepthSpeed: 0.3
+  m_MoveSpeed: 0.3
+  m_MouseSensitivity: 0.0015
+  m_DragPlane: 0
+  m_ScrollGripperSensitivity: 40
+  m_SpeedScale: 3
   m_GripperSpeed: 60
-  m_DoubleClickWindow: 0.3
   m_DampingLambda: 0.03
   m_MaxStepMeters: 0.015
   m_ManipulabilityThreshold: 0.0025
+  m_ReachSafetyMargin: 0.95
+  m_MaxTargetLeadDegrees: 20
+  m_ArmDriveStiffness: 10000
+  m_ArmDriveDamping: 1000
+  m_GripperDriveStiffness: 200
+  m_GripperDriveDamping: 20
+  m_MouthXMode: 0
+  m_FineModeSpeedFactor: 0.25
+  m_WristJogSpeed: 30
   m_TrajectoryDuration: 0.12
   m_UnreachableErrorThreshold: 0.05
   m_UnreachableWindowSeconds: 1.5

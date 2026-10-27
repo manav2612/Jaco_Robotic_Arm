@@ -30,6 +30,39 @@ In order to launch the robot arm in Gazebo and control it using RViz, execute:
 roslaunch moveit_config my_robot_planning_execution.launch
 ```
 ## Unity Game Engine
+### Manual gripper control (Unity 6000.6.4f1)
+
+Open `Assets/Scenes/ManualControlTestScene.unity` and enter Play mode. The Jaco
+starts arched, with the elbow raised and the gripper pointing down. Manual control
+runs locally without ROS. Stop and restart Play mode to reset the starting pose.
+
+| Keys | Action |
+| --- | --- |
+| Arrow keys | Move the gripper tip in the horizontal world XZ plane, holding its orientation |
+| Hold W / S | Raise / lower the tip |
+| Hold A / D | Rotate the base anticlockwise / clockwise, viewed from above |
+| T | Toggle between plane mode and orientation mode; arrows are disabled in orientation mode |
+| R / G | Positive / negative roll in orientation mode |
+| P / H | Positive / negative pitch in orientation mode |
+| Y / L | Positive / negative yaw in orientation mode |
+| Z / C or mouse wheel | Open / close the gripper |
+| 1–6 / 0 | Toggle individual joint locks / unlock all joints |
+| PageUp / PageDown | Increase / decrease translation speed |
+
+Rotation uses the gripper's own frame and holds the tip position: roll is around
+the finger approach direction (imported tool +Y), pitch is around tool +X, and yaw
+is around tool -Z. W/S and A/D work in both modes. The previous WASD, mouse-drag,
+and Space-gated MouthX mappings have been replaced by these bindings.
+
+The controller uses bounded pose IK in the physics loop. At workspace/joint limits
+or with joints locked, a requested pose may be unreachable; the overlay reports
+position and orientation tracking error. Grasping and the ROS/vision pipelines
+are separate from this manual controller.
+
+Regression checks are available through **Jaco → Validate Manual Controls** when
+the editor is outside Play mode. They use the imported robot scene and test the
+start posture, directions, plane/orientation holding, mode gating, and local axes.
+
 We created 3 different Unity Scenes (found in Assets/Scenes directory)
   ### 1. Simple Pick and Place
   This scene is mostly based on the [Pick And Place](https://github.com/Unity-Technologies/Unity-Robotics-Hub/tree/main/tutorials/pick_and_place) tutorial from Unity Robotics Hub. In a terminal execute:

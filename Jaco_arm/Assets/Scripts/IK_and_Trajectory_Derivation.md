@@ -1,5 +1,18 @@
 # Manual IK + Trajectory Control — Derivation & Debug Walkthrough
 
+> **Current controller:** `ManualJointControl.cs` now controls the actual
+> `j2n6s200_end_effector` tip with a six-dimensional pose Jacobian. Its columns are
+> `[axis × (tip − pivot); 0.25 × axis]`, and it solves
+> `(JᵀJ + λ²I) Δq = Jᵀ[position error; 0.25 × rotation-vector error]`.
+> The solve runs in `FixedUpdate`, bounds joint speed and target lead, and holds
+> orientation during translation and position during tool-local rotations.
+> Startup uses a calibrated arched joint configuration. See the root README for
+> the current arrow/W/S/A/D/T/R/P/Y/G/H/L controls.
+>
+> The derivation below documents the **previous position-only controller**. Its
+> three-row Jacobian, mouse inputs, minimum-jerk replanning and exact code references
+> are historical and no longer describe the current implementation.
+
 This document derives, from first principles, the two pieces of math behind
 `ManualJointControl.cs`:
 
