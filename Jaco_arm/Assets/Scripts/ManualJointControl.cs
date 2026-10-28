@@ -41,6 +41,11 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField] float m_ArmDriveDamping = 1000f;
     [SerializeField] float m_GripperDriveStiffness = 200f;
     [SerializeField] float m_GripperDriveDamping = 20f;
+    // Grip squeeze is stiffness * (target - actual), so a target that keeps running past contact
+    // crushes or ejects the object. Cap how far the finger target may lead the measured angle.
+    [SerializeField] float m_GripperMaxTargetLeadDegrees = 5f;
+    // Hard ceiling on finger drive torque; prevents crushing and violent depenetration.
+    [SerializeField] float m_GripperForceLimit = 10f;
     [SerializeField] float m_UnreachableErrorThreshold = 0.05f;
     [SerializeField] float m_UnreachableWindowSeconds = 1.5f;
     [SerializeField] float m_UnreachableMinImprovementFrac = 0.15f;
@@ -122,8 +127,8 @@ public class ManualJointControl : MonoBehaviour
             joint.jointVelocity = new ArticulationReducedSpace(0f);
             ConfigureDrive(joint, m_ArmDriveStiffness, m_ArmDriveDamping, angle);
         }
-        ConfigureDrive(m_RightGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_RightGripper));
-        ConfigureDrive(m_LeftGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_LeftGripper));
+        ConfigureDrive(m_RightGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_RightGripper), m_GripperForceLimit);
+        ConfigureDrive(m_LeftGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_LeftGripper), m_GripperForceLimit);
 
         // PhysX updates the link transforms from the reduced coordinates at its next step.
         yield return new WaitForFixedUpdate();
@@ -141,9 +146,11 @@ public class ManualJointControl : MonoBehaviour
         m_Ready = true;
     }
 
-    static void ConfigureDrive(ArticulationBody joint, float stiffness, float damping, float angle)
+    static void ConfigureDrive(ArticulationBody joint, float stiffness, float damping, float angle, float forceLimit = -1f)
     {
         var drive = joint.xDrive;
+        if (forceLimit > 0f)
+            drive.forceLimit = forceLimit;
         drive.stiffness = stiffness;
         drive.damping = damping;
         drive.target = angle;
@@ -426,10 +433,12 @@ public class ManualJointControl : MonoBehaviour
         m_WindowStartErrorMag = errorMag;
     }
 
-    static void ApplyGripperDelta(ArticulationBody gripper, float delta)
+    void ApplyGripperDelta(ArticulationBody gripper, float delta)
     {
         var drive = gripper.xDrive;
-        drive.target = ClampToLimits(gripper, drive.target + delta);
+        var actual = ActualAngle(gripper);
+        var target = Mathf.Clamp(drive.target + delta, actual - m_GripperMaxTargetLeadDegrees, actual + m_GripperMaxTargetLeadDegrees);
+        drive.target = ClampToLimits(gripper, target);
         gripper.xDrive = drive;
     }
 
