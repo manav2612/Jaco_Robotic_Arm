@@ -75,6 +75,7 @@ public class ManualJointControl : MonoBehaviour
     Quaternion m_DesiredRotation;
     float m_MaxReachMeters, m_PendingScroll;
     bool m_Ready, m_OrientationMode;
+    readonly System.Collections.Generic.List<FingerContactProbe> m_Probes = new System.Collections.Generic.List<FingerContactProbe>();
     ControlInput m_Input;
     string m_DebugStatus = "Setting arched start pose";
     float m_WindowStartTime = -1f, m_WindowStartErrorMag;
@@ -237,7 +238,14 @@ public class ManualJointControl : MonoBehaviour
         foreach (var finger in new[] { m_RightGripper, m_LeftGripper })
         {
             foreach (var collider in finger.GetComponentsInChildren<Collider>())
+            {
                 collider.sharedMaterial = fingerMaterial;
+                var probe = collider.gameObject.GetComponent<FingerContactProbe>();
+                if (probe == null)
+                    probe = collider.gameObject.AddComponent<FingerContactProbe>();
+                probe.Label = $"{finger.name}/{collider.name}";
+                m_Probes.Add(probe);
+            }
             finger.solverIterations = m_SolverIterations * 2;
             finger.solverVelocityIterations = m_SolverVelocityIterations * 2;
         }
@@ -566,7 +574,7 @@ public class ManualJointControl : MonoBehaviour
     {
         if (!m_ManualModeEnabled)
             return;
-        GUILayout.BeginArea(new Rect(10, 60, 440, 330), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 560, 440), GUI.skin.box);
         GUILayout.Label("Jaco gripper control");
         GUILayout.Label(m_OrientationMode ? "ORIENTATION MODE - arrows off (T to switch)" : "PLANE MODE - arrow keys on (T to switch)");
         GUILayout.Label("Arrows: horizontal XZ plane | W: up | S: down");
@@ -582,6 +590,39 @@ public class ManualJointControl : MonoBehaviour
             if (m_JointLocked[i]) locks += $" J{i + 1}";
         if (locks.Length > 0) GUILayout.Label("Locked:" + locks);
         if (m_TargetUnreachable) GUILayout.Label("Target unreachable with the current pose / joint locks");
+        GUILayout.Label($"Fingers R: {ActualAngle(m_RightGripper):F1} -> {m_RightGripper.xDrive.target:F1} deg | L: {ActualAngle(m_LeftGripper):F1} -> {m_LeftGripper.xDrive.target:F1} deg");
+        var touching = 0;
+        foreach (var probe in m_Probes)
+        {
+            if (Time.time - probe.LastContactTime > 0.25f)
+                continue;
+            touching++;
+            GUILayout.Label($"  touch {probe.Label} <-> {probe.OtherName} ({probe.ContactPoints} pts, impulse {probe.Impulse:F3})");
+        }
+        if (touching == 0) GUILayout.Label("  fingers touching nothing");
         GUILayout.EndArea();
+    }
+}
+
+/// <summary>Records what a finger collider is touching so the on-screen panel can show it.</summary>
+public class FingerContactProbe : MonoBehaviour
+{
+    public string Label;
+    public string OtherName = "";
+    public int ContactPoints;
+    public float Impulse;
+    public float LastContactTime = -10f;
+
+    void OnCollisionEnter(Collision collision) => Record(collision);
+
+    void OnCollisionStay(Collision collision) => Record(collision);
+
+    void Record(Collision collision)
+    {
+        var body = collision.collider.attachedRigidbody;
+        OtherName = body != null ? body.name : collision.collider.name;
+        ContactPoints = collision.contactCount;
+        Impulse = collision.impulse.magnitude;
+        LastContactTime = Time.time;
     }
 }
