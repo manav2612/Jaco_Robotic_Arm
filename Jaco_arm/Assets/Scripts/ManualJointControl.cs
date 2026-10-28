@@ -46,6 +46,11 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField] float m_GripperMaxTargetLeadDegrees = 5f;
     // Hard ceiling on finger drive torque; prevents crushing and violent depenetration.
     [SerializeField] float m_GripperForceLimit = 10f;
+    // Grasp realism: contact quality for the fingers and the objects they hold.
+    [SerializeField] float m_FingerFriction = 1f;
+    [SerializeField] int m_SolverIterations = 32;
+    [SerializeField] int m_SolverVelocityIterations = 8;
+    [SerializeField] float m_PhysicsTimestep = 0.01f; // seconds; 0 leaves the project's fixed timestep alone
     [SerializeField] float m_UnreachableErrorThreshold = 0.05f;
     [SerializeField] float m_UnreachableWindowSeconds = 1.5f;
     [SerializeField] float m_UnreachableMinImprovementFrac = 0.15f;
@@ -130,6 +135,8 @@ public class ManualJointControl : MonoBehaviour
         ConfigureDrive(m_RightGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_RightGripper), m_GripperForceLimit);
         ConfigureDrive(m_LeftGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_LeftGripper), m_GripperForceLimit);
 
+        ApplyGraspPhysics();
+
         // PhysX updates the link transforms from the reduced coordinates at its next step.
         yield return new WaitForFixedUpdate();
         m_DesiredPosition = m_EndEffector.position;
@@ -144,6 +151,55 @@ public class ManualJointControl : MonoBehaviour
         }
         m_MaxReachMeters += Vector3.Distance(previous, m_EndEffector.position);
         m_Ready = true;
+    }
+
+    // Runtime contact-quality tuning, applied here so it does not depend on scene/prefab data:
+    // grippy fingertips (Maximum combine wins over the object's own material), more solver
+    // iterations for stable articulation contacts, and continuous collision detection on
+    // the graspable objects so fast closing does not tunnel into a finger.
+    void ApplyGraspPhysics()
+    {
+        if (m_PhysicsTimestep > 0f)
+            Time.fixedDeltaTime = m_PhysicsTimestep;
+
+        var fingerMaterial = new PhysicsMaterial("JacoFingerGrip")
+        {
+            staticFriction = m_FingerFriction,
+            dynamicFriction = m_FingerFriction,
+            frictionCombine = PhysicsMaterialCombine.Maximum,
+            bounciness = 0f,
+            bounceCombine = PhysicsMaterialCombine.Minimum
+        };
+        foreach (var finger in new[] { m_RightGripper, m_LeftGripper })
+        {
+            foreach (var collider in finger.GetComponentsInChildren<Collider>())
+                collider.sharedMaterial = fingerMaterial;
+            finger.solverIterations = m_SolverIterations * 2;
+            finger.solverVelocityIterations = m_SolverVelocityIterations * 2;
+        }
+
+        foreach (var joint in m_ArmJoints)
+        {
+            joint.solverIterations = m_SolverIterations;
+            joint.solverVelocityIterations = m_SolverVelocityIterations;
+        }
+
+        try
+        {
+            foreach (var target in GameObject.FindGameObjectsWithTag("Target"))
+            {
+                if (!target.TryGetComponent<Rigidbody>(out var body))
+                    continue;
+                body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+                body.interpolation = RigidbodyInterpolation.Interpolate;
+                body.solverIterations = m_SolverIterations;
+                body.solverVelocityIterations = m_SolverVelocityIterations;
+            }
+        }
+        catch (UnityException)
+        {
+            // "Target" tag is not defined in this project; nothing to tune.
+        }
     }
 
     static void ConfigureDrive(ArticulationBody joint, float stiffness, float damping, float angle, float forceLimit = -1f)
