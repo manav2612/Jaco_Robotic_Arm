@@ -51,6 +51,9 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField] int m_SolverIterations = 32;
     [SerializeField] int m_SolverVelocityIterations = 8;
     [SerializeField] float m_PhysicsTimestep = 0.01f; // seconds; 0 leaves the project's fixed timestep alone
+    // Stand cans/bottles upright on Play (long axis -> world up, same table spot).
+    [SerializeField] bool m_StandObjectsUpright = true;
+    [SerializeField] string[] m_UprightNameContains = { "coca_cola", "pepsi", "bottle" };
     [SerializeField] float m_UnreachableErrorThreshold = 0.05f;
     [SerializeField] float m_UnreachableWindowSeconds = 1.5f;
     [SerializeField] float m_UnreachableMinImprovementFrac = 0.15f;
@@ -135,6 +138,8 @@ public class ManualJointControl : MonoBehaviour
         ConfigureDrive(m_RightGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_RightGripper), m_GripperForceLimit);
         ConfigureDrive(m_LeftGripper, m_GripperDriveStiffness, m_GripperDriveDamping, ActualAngle(m_LeftGripper), m_GripperForceLimit);
 
+        if (m_StandObjectsUpright)
+            StandObjectsUpright();
         ApplyGraspPhysics();
 
         // PhysX updates the link transforms from the reduced coordinates at its next step.
@@ -151,6 +156,65 @@ public class ManualJointControl : MonoBehaviour
         }
         m_MaxReachMeters += Vector3.Distance(previous, m_EndEffector.position);
         m_Ready = true;
+    }
+
+    // Rotates each matching scene object so its longest axis points along world up, then
+    // re-seats it on the surface it was resting on (same footprint centre, same lowest point).
+    void StandObjectsUpright()
+    {
+        foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            if (!NameMatches(root.name))
+                continue;
+            var renderers = root.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0)
+                continue;
+
+            var before = CombinedBounds(renderers);
+
+            // Long axis of the object's own shape, measured with the rotation reset.
+            var originalRotation = root.transform.rotation;
+            root.transform.rotation = Quaternion.identity;
+            var size = CombinedBounds(renderers).size;
+            var axis = Vector3.up;
+            var longest = size.y;
+            var second = Mathf.Max(size.x, size.z);
+            if (size.x >= size.y && size.x >= size.z) { axis = Vector3.right; longest = size.x; second = Mathf.Max(size.y, size.z); }
+            else if (size.z >= size.y && size.z >= size.x) { axis = Vector3.forward; longest = size.z; second = Mathf.Max(size.x, size.y); }
+            if (longest < second * 1.2f)
+            {
+                root.transform.rotation = originalRotation; // roughly cubic: no clear long axis
+                continue;
+            }
+
+            root.transform.rotation = Quaternion.FromToRotation(axis, Vector3.up);
+            var after = CombinedBounds(renderers);
+            root.transform.position += new Vector3(before.center.x - after.center.x,
+                before.min.y - after.min.y + 0.002f, before.center.z - after.center.z);
+
+            foreach (var body in root.GetComponentsInChildren<Rigidbody>())
+            {
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
+        }
+        Physics.SyncTransforms();
+    }
+
+    bool NameMatches(string objectName)
+    {
+        foreach (var part in m_UprightNameContains)
+            if (!string.IsNullOrEmpty(part) && objectName.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        return false;
+    }
+
+    static Bounds CombinedBounds(Renderer[] renderers)
+    {
+        var bounds = renderers[0].bounds;
+        for (var i = 1; i < renderers.Length; i++)
+            bounds.Encapsulate(renderers[i].bounds);
+        return bounds;
     }
 
     // Runtime contact-quality tuning, applied here so it does not depend on scene/prefab data:
