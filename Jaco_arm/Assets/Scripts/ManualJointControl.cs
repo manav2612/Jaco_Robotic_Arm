@@ -200,6 +200,9 @@ public class ManualJointControl : MonoBehaviour
             }
 
             root.transform.rotation = Quaternion.FromToRotation(axis, Vector3.up);
+            // The long axis only fixes up-vs-down ambiguity; a bottle must have its narrow neck on top.
+            if (NeckPointsDown(root))
+                root.transform.RotateAround(CombinedBounds(renderers).center, Vector3.right, 180f);
             var after = CombinedBounds(renderers);
             root.transform.position += new Vector3(before.center.x - after.center.x,
                 before.min.y - after.min.y + 0.002f, before.center.z - after.center.z);
@@ -211,6 +214,46 @@ public class ManualJointControl : MonoBehaviour
             }
         }
         Physics.SyncTransforms();
+    }
+
+    // True when the top 15% of the object's height is wider than the bottom 15% (neck is down).
+    // Symmetric objects such as cans come out within the tolerance and are left alone.
+    static bool NeckPointsDown(GameObject root)
+    {
+        var verts = new System.Collections.Generic.List<Vector3>();
+        foreach (var filter in root.GetComponentsInChildren<MeshFilter>())
+        {
+            var mesh = filter.sharedMesh;
+            if (mesh == null || !mesh.isReadable)
+                continue;
+            foreach (var v in mesh.vertices)
+                verts.Add(filter.transform.TransformPoint(v));
+        }
+        if (verts.Count < 16)
+            return false;
+
+        float minY = float.MaxValue, maxY = float.MinValue;
+        var centre = Vector2.zero;
+        foreach (var v in verts)
+        {
+            minY = Mathf.Min(minY, v.y);
+            maxY = Mathf.Max(maxY, v.y);
+            centre += new Vector2(v.x, v.z);
+        }
+        centre /= verts.Count;
+
+        var band = (maxY - minY) * 0.15f;
+        float topSum = 0f, bottomSum = 0f;
+        int topCount = 0, bottomCount = 0;
+        foreach (var v in verts)
+        {
+            var radius = (new Vector2(v.x, v.z) - centre).magnitude;
+            if (v.y >= maxY - band) { topSum += radius; topCount++; }
+            else if (v.y <= minY + band) { bottomSum += radius; bottomCount++; }
+        }
+        if (topCount == 0 || bottomCount == 0)
+            return false;
+        return topSum / topCount > 1.15f * (bottomSum / bottomCount);
     }
 
     bool NameMatches(string objectName)
