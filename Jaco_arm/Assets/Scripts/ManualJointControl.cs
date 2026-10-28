@@ -51,6 +51,13 @@ public class ManualJointControl : MonoBehaviour
     [SerializeField] int m_SolverIterations = 32;
     [SerializeField] int m_SolverVelocityIterations = 8;
     [SerializeField] float m_PhysicsTimestep = 0.01f; // seconds; 0 leaves the project's fixed timestep alone
+    // Grasp assist: when both fingers touch the same rigidbody it is pinned to the wrist with a
+    // breakable fixed joint (friction alone lets flat-faced fingers squeeze objects out). Opening
+    // the gripper (Z / scroll) releases it.
+    [SerializeField] bool m_GraspAssist = true;
+    [SerializeField] float m_GraspHoldDelay = 0.15f;  // seconds both fingers must touch before pinning
+    [SerializeField] float m_GraspBreakForce = 300f;
+    [SerializeField] float m_GraspBreakTorque = 30f;
     // Stand cans/bottles upright on Play (long axis -> world up, same table spot).
     [SerializeField] bool m_StandObjectsUpright = true;
     [SerializeField] string[] m_UprightNameContains = { "coca_cola", "pepsi", "bottle" };
@@ -76,6 +83,10 @@ public class ManualJointControl : MonoBehaviour
     float m_MaxReachMeters, m_PendingScroll;
     bool m_Ready, m_OrientationMode;
     readonly System.Collections.Generic.List<FingerContactProbe> m_Probes = new System.Collections.Generic.List<FingerContactProbe>();
+    FixedJoint m_GraspJoint;
+    Rigidbody m_HeldBody;
+    float m_BothTouchSince = -1f, m_NoRegrabUntil;
+    string m_GraspStatus = "armed";
     ControlInput m_Input;
     string m_DebugStatus = "Setting arched start pose";
     float m_WindowStartTime = -1f, m_WindowStartErrorMag;
@@ -244,6 +255,7 @@ public class ManualJointControl : MonoBehaviour
                 if (probe == null)
                     probe = collider.gameObject.AddComponent<FingerContactProbe>();
                 probe.Label = $"{finger.name}/{collider.name}";
+                probe.Finger = finger;
                 m_Probes.Add(probe);
             }
             finger.solverIterations = m_SolverIterations * 2;
@@ -425,12 +437,85 @@ public class ManualJointControl : MonoBehaviour
         UpdateUnreachableFlag(Vector3.Distance(m_DesiredPosition, m_EndEffector.position));
 
         var gripperDelta = m_Input.gripper * m_GripperSpeed * dt + m_PendingScroll * m_ScrollGripperSensitivity;
+        UpdateGraspAssist(gripperDelta < -0.001f);
         m_PendingScroll = 0f;
         if (Mathf.Abs(gripperDelta) > 0f)
         {
             ApplyGripperDelta(m_RightGripper, gripperDelta);
             ApplyGripperDelta(m_LeftGripper, gripperDelta);
         }
+    }
+
+    void UpdateGraspAssist(bool opening)
+    {
+        if (!m_GraspAssist)
+        {
+            m_GraspStatus = "off";
+            return;
+        }
+
+        if (m_HeldBody != null && m_GraspJoint == null)
+        {
+            m_HeldBody = null; // the joint broke under load
+            m_NoRegrabUntil = Time.time + 0.5f;
+            m_GraspStatus = "joint broke";
+        }
+
+        if (m_HeldBody != null)
+        {
+            if (opening)
+            {
+                Destroy(m_GraspJoint);
+                m_GraspJoint = null;
+                m_HeldBody = null;
+                m_BothTouchSince = -1f;
+                m_NoRegrabUntil = Time.time + 0.5f;
+                m_GraspStatus = "released";
+            }
+            else
+            {
+                m_GraspStatus = $"HOLDING {m_HeldBody.name}";
+            }
+            return;
+        }
+
+        var shared = FindSharedContact();
+        if (shared == null || opening || Time.time < m_NoRegrabUntil)
+        {
+            m_BothTouchSince = -1f;
+            if (m_GraspStatus.StartsWith("HOLDING"))
+                m_GraspStatus = "armed";
+            return;
+        }
+
+        if (m_BothTouchSince < 0f)
+            m_BothTouchSince = Time.time;
+        if (Time.time - m_BothTouchSince < m_GraspHoldDelay)
+        {
+            m_GraspStatus = $"gripping {shared.name}...";
+            return;
+        }
+
+        m_GraspJoint = shared.gameObject.AddComponent<FixedJoint>();
+        m_GraspJoint.connectedArticulationBody = m_ArmJoints[k_NumRobotJoints - 1];
+        m_GraspJoint.breakForce = m_GraspBreakForce;
+        m_GraspJoint.breakTorque = m_GraspBreakTorque;
+        m_HeldBody = shared;
+        m_GraspStatus = $"HOLDING {shared.name}";
+    }
+
+    // A rigidbody that both fingers are currently touching, or null.
+    Rigidbody FindSharedContact()
+    {
+        foreach (var a in m_Probes)
+        {
+            if (a.Finger != m_RightGripper || a.OtherBody == null || Time.time - a.LastContactTime > 0.1f)
+                continue;
+            foreach (var b in m_Probes)
+                if (b.Finger == m_LeftGripper && b.OtherBody == a.OtherBody && Time.time - b.LastContactTime <= 0.1f)
+                    return a.OtherBody;
+        }
+        return null;
     }
 
     void JogBase(float input, float dt)
@@ -574,7 +659,7 @@ public class ManualJointControl : MonoBehaviour
     {
         if (!m_ManualModeEnabled)
             return;
-        GUILayout.BeginArea(new Rect(10, 60, 560, 440), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 560, 470), GUI.skin.box);
         GUILayout.Label("Jaco gripper control");
         GUILayout.Label(m_OrientationMode ? "ORIENTATION MODE - arrows off (T to switch)" : "PLANE MODE - arrow keys on (T to switch)");
         GUILayout.Label("Arrows: horizontal XZ plane | W: up | S: down");
@@ -600,6 +685,7 @@ public class ManualJointControl : MonoBehaviour
             GUILayout.Label($"  touch {probe.Label} <-> {probe.OtherName} ({probe.ContactPoints} pts, impulse {probe.Impulse:F3})");
         }
         if (touching == 0) GUILayout.Label("  fingers touching nothing");
+        GUILayout.Label($"Grasp assist: {m_GraspStatus}");
         GUILayout.EndArea();
     }
 }
@@ -608,6 +694,8 @@ public class ManualJointControl : MonoBehaviour
 public class FingerContactProbe : MonoBehaviour
 {
     public string Label;
+    public ArticulationBody Finger;
+    public Rigidbody OtherBody;
     public string OtherName = "";
     public int ContactPoints;
     public float Impulse;
@@ -620,6 +708,7 @@ public class FingerContactProbe : MonoBehaviour
     void Record(Collision collision)
     {
         var body = collision.collider.attachedRigidbody;
+        OtherBody = body;
         OtherName = body != null ? body.name : collision.collider.name;
         ContactPoints = collision.contactCount;
         Impulse = collision.impulse.magnitude;
