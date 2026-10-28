@@ -7,10 +7,15 @@ using UnityEngine;
 /// change height, and A/D rotate the base counterclockwise/clockwise from above.
 /// T exchanges arrow control for tool-local roll (R/G), pitch (P/H), yaw (Y/L).
 /// The pose IK holds orientation during translation and position during rotation.
+/// Left-click drag also translates the tip in a fixed world plane (mouse X/Y map onto
+/// that plane's two axes; Tab cycles XZ -> XY -> YZ), and right-click drag moves world Y.
 /// </summary>
 public class ManualJointControl : MonoBehaviour
 {
     const int k_NumRobotJoints = 6;
+
+    enum DragPlane { XZ, XY, YZ }
+
     // This j2n6s200 pose puts the tip at (0, 0.4, -0.4), with the elbow raised
     // and the URDF tool approach axis (+Y after import) pointing down.
     static readonly float[] k_StartAngles = { -7.66934f, 195.41690f, 99.62644f, -31.45060f, 101.46753f, -129.11994f };
@@ -22,6 +27,8 @@ public class ManualJointControl : MonoBehaviour
 
     [SerializeField] float m_MoveSpeed = 0.3f;
     [SerializeField] float m_SpeedScale = 3f;
+    [SerializeField] float m_MouseSensitivity = 0.0015f; // meters of goal movement per mouse-axis delta unit
+    [SerializeField] DragPlane m_DragPlane = DragPlane.XZ;
     [SerializeField] float m_GripperSpeed = 60f;
     [SerializeField] float m_ScrollGripperSensitivity = 40f;
     [SerializeField] float m_WristJogSpeed = 30f;
@@ -51,7 +58,7 @@ public class ManualJointControl : MonoBehaviour
     readonly Vector3[] m_LinearColumns = new Vector3[k_NumRobotJoints];
     readonly Vector3[] m_AngularColumns = new Vector3[k_NumRobotJoints];
     readonly double[,] m_NormalSystem = new double[k_NumRobotJoints, k_NumRobotJoints + 1];
-    Vector3 m_DesiredPosition, m_ArmBasePosition;
+    Vector3 m_DesiredPosition, m_ArmBasePosition, m_PendingMouseDelta;
     Quaternion m_DesiredRotation;
     float m_MaxReachMeters, m_PendingScroll;
     bool m_Ready, m_OrientationMode;
@@ -197,6 +204,8 @@ public class ManualJointControl : MonoBehaviour
             m_DesiredPosition = m_EndEffector.position;
             m_DesiredRotation = m_EndEffector.rotation;
         }
+        if (Input.GetKeyDown(KeyCode.Tab))
+            m_DragPlane = (DragPlane)(((int)m_DragPlane + 1) % 3);
         if (Input.GetKeyDown(KeyCode.PageUp))
             m_SpeedScale = Mathf.Min(m_SpeedScale * 1.25f, 20f);
         if (Input.GetKeyDown(KeyCode.PageDown))
@@ -210,6 +219,28 @@ public class ManualJointControl : MonoBehaviour
 
         m_Input = ReadInput(Input.GetKey, m_OrientationMode);
         m_PendingScroll += Input.GetAxis("Mouse ScrollWheel");
+        m_PendingMouseDelta += ReadMouseDrag();
+    }
+
+    // Fixed world axes (not camera-relative). Accumulated here and applied in FixedUpdate.
+    Vector3 ReadMouseDrag()
+    {
+        var delta = Vector3.zero;
+        var scale = m_MouseSensitivity * m_SpeedScale;
+        if (Input.GetMouseButton(0))
+        {
+            var x = Input.GetAxis("Mouse X") * scale;
+            var y = Input.GetAxis("Mouse Y") * scale;
+            switch (m_DragPlane)
+            {
+                case DragPlane.XZ: delta += new Vector3(x, 0f, y); break;
+                case DragPlane.XY: delta += new Vector3(x, y, 0f); break;
+                case DragPlane.YZ: delta += new Vector3(0f, y, x); break;
+            }
+        }
+        if (Input.GetMouseButton(1))
+            delta += Vector3.up * (Input.GetAxis("Mouse Y") * scale);
+        return delta;
     }
 
     void OnApplicationFocus(bool focused)
@@ -218,6 +249,7 @@ public class ManualJointControl : MonoBehaviour
         {
             m_Input = default;
             m_PendingScroll = 0f;
+            m_PendingMouseDelta = Vector3.zero;
         }
     }
 
@@ -231,10 +263,11 @@ public class ManualJointControl : MonoBehaviour
         if (baseJogging)
             JogBase(m_Input.baseTurn, dt);
 
-        if (m_Input.translation.sqrMagnitude > 0f)
+        var delta = m_Input.translation * (m_MoveSpeed * m_SpeedScale * dt) + m_PendingMouseDelta;
+        m_PendingMouseDelta = Vector3.zero;
+        if (delta.sqrMagnitude > 0f)
         {
             var previousGoal = m_DesiredPosition;
-            var delta = m_Input.translation * (m_MoveSpeed * m_SpeedScale * dt);
             // Bound only the requested axes, preserving height during horizontal motion.
             for (var axis = 0; axis < 3; axis++)
                 if (Mathf.Abs(delta[axis]) > 0f)
@@ -404,13 +437,14 @@ public class ManualJointControl : MonoBehaviour
     {
         if (!m_ManualModeEnabled)
             return;
-        GUILayout.BeginArea(new Rect(10, 60, 440, 310), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 60, 440, 330), GUI.skin.box);
         GUILayout.Label("Jaco gripper control");
         GUILayout.Label(m_OrientationMode ? "ORIENTATION MODE - arrows off (T to switch)" : "PLANE MODE - arrow keys on (T to switch)");
         GUILayout.Label("Arrows: horizontal XZ plane | W: up | S: down");
         GUILayout.Label("A: base anticlockwise | D: clockwise (viewed from above)");
         GUILayout.Label("Orientation mode: R/G roll +/- | P/H pitch +/- | Y/L yaw +/-");
         GUILayout.Label("Rotations follow the gripper; roll turns around the finger direction.");
+        GUILayout.Label($"Mouse: left-drag moves {m_DragPlane} plane (Tab to cycle) | right-drag: world Y");
         GUILayout.Label("Z: open | C: close gripper | scroll: gripper");
         GUILayout.Label("1-6: joint locks | 0: unlock all | PageUp/Down: move speed");
         GUILayout.Label($"Speed x{m_SpeedScale:F2} | {m_DebugStatus}");
